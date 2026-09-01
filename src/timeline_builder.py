@@ -476,6 +476,42 @@ class TimelineBuilder:
         self.used_visuals.add(key)
         return True
 
+    def clean_visual_query(self, query):
+        """Final guard: turn any stale/generic query into a clean Pexels query."""
+        q = re.sub(r"\s+", " ", str(query).strip())
+
+        # Pexels search should receive normal words, not debug separators.
+        q = q.replace("|", " ")
+
+        # Collapse duplicate location phrases, e.g. "san diego ... san diego".
+        words = q.split()
+        cleaned = []
+        for word in words:
+            if not cleaned or word.lower() != cleaned[-1].lower():
+                cleaned.append(word)
+        q = " ".join(cleaned)
+
+        replacements = {
+            "hotel wifi": "wifi",
+            "hotel bathroom": "bathroom",
+            "luxury hotel bathroom shower": "bathroom",
+            "hotel room coffee maker": "coffee maker",
+            "hotel room mini fridge": "mini fridge",
+            "luxury hotel swimming pool": "swimming pool",
+            "hotel gym fitness center": "gym",
+            "hotel tennis court": "tennis court",
+            "hotel booking": "hotel booking",
+            "hotel check in": "reception desk",
+            "hotel check out": "hotel checkout",
+            "hotel interior": "room interior",
+        }
+
+        low = q.lower()
+        if low in replacements:
+            q = replacements[low]
+
+        return q.strip()
+
     # =========================================================
     # VISUAL SELECTION
     # =========================================================
@@ -495,6 +531,7 @@ class TimelineBuilder:
             text=text,
             scene=scene,
         )
+        prompt = self.clean_visual_query(prompt)
 
 
         print(f"[SEARCH QUERY] {prompt}")
@@ -561,6 +598,7 @@ class TimelineBuilder:
             "boutique hotel design",
             "hotel courtyard",
             "hotel pool area",
+            "travel destination",
             "hotel hallway",
             "city hotel building",
             "hotel amenities",

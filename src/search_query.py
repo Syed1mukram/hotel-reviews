@@ -1287,238 +1287,100 @@ class SearchQueryGenerator:
 
     def generate(self, text, scene="general"):
         """
-        Return ONLY explicit visual concepts found in the CURRENT sentence.
+        Return one clean, natural-language visual query for Pexels.
 
-        No raw sentence prose is used in a query.
-        Multiple concepts are separated with "|".
+        Rules:
+        - Prefer the most specific concrete visual mentioned.
+        - Do not add "hotel" to generic objects/activities.
+        - Use location only for named places / destination-specific searches.
+        - Never return raw prose, pipe separators, or duplicated location text.
         """
-        original = str(text)
-        t = re.sub(r"\s+", " ", original.lower().strip())
+        original = str(text).strip()
+        t = re.sub(r"\s+", " ", original.lower())
+        t = t.replace("wi-fi", "wifi").replace("wi fi", "wifi")
+        t = t.replace("mini-fridge", "mini fridge")
+        t = t.replace("air-conditioned", "air conditioned")
+        t = t.replace("smag", "smeg")
 
-        # Common ASR corrections before matching.
-        corrections = {
-            "wi fi": "wifi",
-            "wi-fi": "wifi",
-            "mini-fridge": "mini fridge",
-            "air-conditioned": "air conditioned",
-            "smag": "smeg",
-            "smeg": "smeg",
-            "mvp": "mbps",
-        }
-        for bad, good in corrections.items():
-            t = t.replace(bad, good)
-
-        location = self.find_location(t)
-
-        def add_location(query):
-            q = query.strip()
-
-            # Location is useful for named landmarks/destinations, but hurts
-            # generic Pexels concepts such as "wifi", "bathroom", and "gym".
-            location_allowed = any(
-                key in q.lower()
-                for key in (
-                    "landmark",
-                    "museum",
-                    "temple",
-                    "stadium",
-                    "beach",
-                    "island",
-                    "travel",
-                    "city",
-                    "park",
-                    "attraction",
-                )
-            )
-
-            if location and location_allowed and location not in q:
-                return f"{q} {location}"
-
-            return q
-
-        def has(*terms):
-            return any(
-                re.search(
-                    r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])",
-                    t
-                )
-                for term in terms
-            )
-
-        # Ordered from specific to general. We keep every explicit concept
-        # present in the sentence, then cap at three visual pieces.
+        # More specific concepts are listed first.
         rules = [
-            # PET / SERVICE ANIMAL
-            (("service animal","service dog","guide dog","assistance dog",
-              "assistance animal"), "service dog"),
-            (("pet friendly","pet-friendly","pet policy","pet fee",
-              "pets are allowed","pets are welcome","pets allowed",
-              "dogs are welcome","dogs are allowed","cats are welcome",
-              "cats are allowed","dog","dogs","cat","cats","pet","pets"),
-             "pet friendly dog"),
-
-            # ROOM / BED
             (("family suite",), "family suite"),
-            (("suite","suites"), "hotel suite"),
-            (("bunk beds","bunk bed"), "bunk beds"),
-            (("king bed","queen bed","twin beds","twin bed","extra bed",
-              "bedroom","bed","beds","mattress","pillow","crib","cot"),
-             "bed"),
-
-            # BATHROOM / AMENITIES
-            (("bathroom","shower","bathtub","walk-in shower","toilet"),
-             "bathroom"),
-            (("toiletries","toiletry","shampoo","conditioner","soap",
-              "body wash","toothbrush","toothpaste","towels","bathrobe",
-              "slippers"),
-             "bathroom toiletries"),
-            (("wifi","wireless internet","internet access","free internet",
-              "high-speed internet"),
-             "wifi"),
-            (("air conditioning","air conditioner","air conditioned",
-              "climate control"),
-             "air conditioning"),
-            (("mini fridge","minibar","mini bar","refrigerator","fridge"),
-             "mini fridge"),
-            (("coffee maker","coffee machine","tea maker"),
-             "coffee maker"),
-            (("kettle","electric kettle","smeg"),
-             "electric kettle"),
-            (("television","tv","smart tv","flat-screen tv",
-              "flat screen tv"),
-             "television"),
-            (("balcony","terrace","private terrace","patio","veranda"),
-             "balcony terrace"),
-            (("ocean view","sea view","water view","mountain view",
-              "garden view","city view","scenic view","panoramic view"),
-             "scenic view"),
-
-            # FACILITIES
-            (("swimming pool","infinity pool","outdoor pool","indoor pool",
-              "poolside","pool area","pool"),
-             "swimming pool"),
-            (("hot tub","jacuzzi","whirlpool"),
-             "jacuzzi"),
-            (("spa","massage","wellness","sauna","steam room","steam bath",
-              "treatment"),
-             "spa"),
-            (("gym","fitness center","fitness centre","fitness room",
-              "workout","exercise"),
-             "gym"),
-            (("game room","games room"),
-             "game room"),
-            (("meeting room","business center","business centre",
-              "conference room","conference","workspace","work space"),
-             "meeting room"),
-
-            # DINING
-            (("breakfast","breakfast buffet","morning meal"),
-             "breakfast"),
-            (("restaurant","restaurants","dining","dinner","lunch","buffet",
-              "meal","food","coffee shop","cafe"),
-             "restaurant dining"),
-            (("room service","in-room dining","in room dining"),
-             "room service"),
-            (("bar","cocktail","drinks","beverages","lounge"),
-             "hotel bar lounge"),
-
-            # TRANSPORT / LOCATION
-            (("parking","car park","parking lot","parking garage","free parking"),
-             "parking"),
-            (("electric car charging","ev charging","charging station"),
-             "ev charging station"),
-            (("shuttle","shuttle","airport transfer","airport shuttle",
-              "airport transportation","transfer service"),
-             "shuttle"),
-            (("airport","airport"),
-             "airport"),
-
-            # PLACES / ACTIVITIES
-            (("museum","museums"), "museum"),
-            (("temple","temples"), "temple landmark"),
-            (("church","churches"), "historic church"),
-            (("mosque","mosques"), "mosque landmark"),
-            (("stadium","sports stadium"), "sports stadium"),
-            (("landmark","landmarks","monument","historic site",
-              "historical site"), "city landmark"),
-            (("beach","beaches","beachfront","ocean","sea","coast","shore",
-              "lagoon"), "beach ocean"),
-            (("snorkeling","snorkelling"), "tropical snorkeling"),
-            (("scuba diving","diving","scuba dive"), "scuba diving"),
-            (("kayaking","kayak"), "tropical kayaking"),
-            (("paddleboard","paddle boarding","stand up paddle"),
-             "paddle boarding"),
-            (("surfing","surf"), "tropical surfing"),
-            (("canoeing","canoe"), "tropical canoeing"),
-            (("sailing","sailboat"), "tropical sailing"),
-            (("boat tour","boat trip","island hopping","island tour"),
-             "island boat tour"),
-            (("hiking","hike","trekking","trek"), "hiking"),
-            (("cycling","bicycle","bike","biking"), "cycling"),
-            (("golf","golf course","golf club"), "golf course"),
-            (("tennis","tennis court"), "tennis court"),
-            (("water sports","watersports"), "water sports"),
-
-            # SERVICE / POLICY
-            (("check-in","check in","front desk","arrival"),
-             "hotel check in"),
-            (("check-out","check out","departure"),
-             "hotel check out"),
-            (("credit card","debit card","card payment","card payments",
-              "pay by card","payment card"),
-             "card payment"),
-            (("security deposit","refundable deposit","deposit required",
-              "cash deposit"),
-             "hotel security deposit"),
-            (("reservation","reservations","booking","booked"),
-             "hotel booking"),
-
-            # REVIEW / VALUE
-            (("rating","ratings","rated","review","reviews","score","scores",
-              "guest rating"),
-             "rating review"),
-            (("price","prices","cost","value","budget","expensive","affordable",
-              "cheap","rate","rates","per night","taxes","fees"),
-             "price"),
+            (("bunk beds", "bunk bed"), "bunk beds"),
+            (("electric kettle", "smeg"), "electric kettle"),
+            (("coffee maker", "coffee machine", "tea maker"), "coffee maker"),
+            (("mini fridge", "minibar", "mini bar", "refrigerator", "fridge"), "mini fridge"),
+            (("bathroom", "shower", "bathtub", "walk-in shower", "toilet"), "bathroom"),
+            (("toiletries", "shampoo", "conditioner", "soap", "body wash", "toothbrush", "toothpaste", "towels"), "bathroom toiletries"),
+            (("wifi", "wireless internet", "internet access", "free internet", "high-speed internet"), "wifi"),
+            (("air conditioning", "air conditioner", "air conditioned", "climate control"), "air conditioning"),
+            (("king bed", "queen bed", "twin beds", "twin bed", "bedroom", "bed", "beds", "mattress", "pillow"), "bed"),
+            (("television", "tv", "smart tv", "flat-screen tv", "flat screen tv"), "television"),
+            (("balcony", "terrace", "private terrace", "patio", "veranda"), "balcony"),
+            (("ocean view", "sea view", "water view", "mountain view", "garden view", "city view", "scenic view", "panoramic view"), "scenic view"),
+            (("swimming pool", "infinity pool", "outdoor pool", "indoor pool", "poolside", "pool area", "pool"), "swimming pool"),
+            (("hot tub", "jacuzzi", "whirlpool"), "jacuzzi"),
+            (("spa", "massage", "wellness", "sauna", "steam room", "treatment"), "spa"),
+            (("gym", "fitness center", "fitness centre", "fitness room", "workout", "exercise"), "gym"),
+            (("game room", "games room"), "game room"),
+            (("meeting room", "business center", "business centre", "conference room", "conference", "workspace"), "meeting room"),
+            (("room service", "in-room dining", "in room dining"), "room service"),
+            (("breakfast", "breakfast buffet", "morning meal"), "breakfast"),
+            (("restaurant", "restaurants", "dining", "dinner", "lunch", "buffet", "meal", "food", "coffee shop", "cafe"), "restaurant dining"),
+            (("bar", "cocktail", "drinks", "beverages", "lounge"), "bar lounge"),
+            (("parking", "car park", "parking lot", "parking garage", "free parking"), "parking lot cars"),
+            (("electric car charging", "ev charging", "charging station"), "ev charging station"),
+            (("shuttle", "airport transfer", "airport shuttle", "airport transportation"), "shuttle"),
+            (("airport",), "airport"),
+            (("check-in", "check in", "front desk", "arrival"), "reception desk"),
+            (("check-out", "check out", "departure"), "hotel checkout"),
+            (("credit card", "debit card", "card payment", "payment card"), "card payment"),
+            (("security deposit", "refundable deposit", "deposit required", "cash deposit"), "security deposit"),
+            (("reservation", "reservations", "booking", "booked"), "hotel booking"),
+            (("pet friendly", "pet-friendly", "pet policy", "pet fee", "dogs", "dog", "cats", "cat", "pets", "pet"), "pet friendly dog"),
+            (("museum", "museums"), "museum"),
+            (("temple", "temples"), "temple"),
+            (("church", "churches"), "historic church"),
+            (("mosque", "mosques"), "mosque"),
+            (("stadium", "sports stadium"), "stadium"),
+            (("landmark", "landmarks", "monument", "historic site", "historical site"), "city landmark"),
+            (("beach", "beaches", "beachfront", "ocean", "sea", "coast", "shore", "lagoon"), "beach ocean"),
+            (("snorkeling", "snorkelling"), "snorkeling"),
+            (("scuba diving", "diving", "scuba dive"), "scuba diving"),
+            (("kayaking", "kayak"), "kayaking"),
+            (("paddleboard", "paddle boarding", "stand up paddle"), "paddle boarding"),
+            (("surfing", "surf"), "surfing"),
+            (("canoeing", "canoe"), "canoeing"),
+            (("sailing", "sailboat"), "sailing"),
+            (("boat tour", "boat trip", "island hopping", "island tour"), "island boat tour"),
+            (("hiking", "hike", "trekking", "trek"), "hiking"),
+            (("cycling", "bicycle", "bike", "biking"), "cycling"),
+            (("golf", "golf course", "golf club"), "golf course"),
+            (("tennis", "tennis court"), "tennis court"),
+            (("water sports", "watersports"), "water sports"),
+            (("five star", "four star", "rated", "rating", "ratings", "score", "guest reviews", "reviews", "review"), "five star hotel"),
+            (("price", "prices", "cost", "budget", "expensive", "affordable", "cheap", "per night", "taxes", "fees"), "hotel booking"),
         ]
 
-        concepts = []
+        def has(term):
+            return re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", t) is not None
+
         for terms, query in rules:
-            if has(*terms) and query not in concepts:
-                concepts.append(add_location(query))
+            if any(has(term) for term in terms):
+                return query
 
-        # Negative statements: preserve the actual subject, but NEVER search
-        # generic prose.
-        negative_rules = [
-            (("no parking","parking unavailable","does not offer parking",
-              "doesn't offer parking"), "hotel parking unavailable"),
-            (("pets aren't allowed","pets are not allowed","no pets",
-              "pets not permitted","pets prohibited"), "hotel no pets policy"),
-            (("no smoking","smoking is not allowed","smoking isn't allowed"),
-             "hotel no smoking policy"),
-            (("no wifi","no wi-fi","wifi is not available",
-              "wi-fi is not available"), "hotel wifi unavailable"),
-            (("no breakfast","breakfast is not included",
-              "breakfast isn't included"), "hotel breakfast unavailable"),
+        # Proper-noun place extraction, only when no stronger visual exists.
+        patterns = [
+            r"\b([A-Z][a-zA-Z']+(?:\s+(?:of|the|and)\s+)?(?:\s+[A-Z][a-zA-Z']+)+)\b"
         ]
-        negatives = []
-        for terms, query in negative_rules:
-            if has(*terms):
-                negatives.append(add_location(query))
+        for pattern in patterns:
+            matches = re.findall(pattern, original)
+            if matches:
+                candidate = max(matches, key=len).strip()
+                if candidate.lower() not in {
+                    "there is", "this is", "the property", "one guest"
+                }:
+                    return f"{candidate} travel landmark"
 
-        if negatives:
-            return " | ".join(negatives[:3])
-
-        # Named place only when the sentence has no stronger visual concept.
-        if concepts:
-            return " | ".join(concepts[:3])
-
-        # Proper nouns can be useful for real landmarks/properties.
-        proper = self.extract_proper_nouns(original)
-        if proper:
-            return add_location(proper)
-
-        # Scene fallback is the ONLY fallback. Never raw prose.
         scene_l = str(scene).lower()
         defaults = [
             ("bathroom", "bathroom"),
@@ -1529,11 +1391,11 @@ class SearchQueryGenerator:
             ("room", "room interior"),
             ("lobby", "hotel lobby"),
             ("outside", "hotel exterior"),
-            ("location", "hotel location"),
-            ("review", "review rating"),
+            ("location", "city travel"),
+            ("review", "five star hotel"),
         ]
         for key, query in defaults:
             if key in scene_l:
-                return add_location(query)
+                return query
 
         return "hotel interior"

@@ -19,7 +19,6 @@ def main():
 
     renderer.render(
         timeline=timeline,
-        audio_file=VOICE_FILE,
         output=OUTPUT_VIDEO,
     )
 
