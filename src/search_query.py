@@ -1357,8 +1357,9 @@ class SearchQueryGenerator:
             (("golf", "golf course", "golf club"), "golf course"),
             (("tennis", "tennis court"), "tennis court"),
             (("water sports", "watersports"), "water sports"),
-            (("five star", "four star", "rated", "rating", "ratings", "score", "guest reviews", "reviews", "review"), "five star hotel"),
-            (("price", "prices", "cost", "budget", "expensive", "affordable", "cheap", "per night", "taxes", "fees"), "hotel booking"),
+            (("five star", "four star"), "luxury hotel"),
+            (("rated", "rating", "ratings", "score", "guest reviews", "reviews", "review"), "guest review"),
+            (("price", "prices", "cost", "budget", "expensive", "affordable", "cheap", "per night", "taxes", "fees"), "price tag booking"),
         ]
 
         def has(term):
@@ -1379,7 +1380,7 @@ class SearchQueryGenerator:
                 if candidate.lower() not in {
                     "there is", "this is", "the property", "one guest"
                 }:
-                    return f"{candidate} travel landmark"
+                    return f"{candidate} landmark"
 
         scene_l = str(scene).lower()
         defaults = [

@@ -85,7 +85,7 @@ class TimelineBuilder:
         # Minimum acceptable match score for an "original" hotel image.
         # Below this, the match is too weak/generic to trust — fall
         # back to stock instead of forcing an unrelated original photo.
-        self.min_original_score = 0.22
+        self.min_original_score = 0.17
 
     # =========================================================
     # ORIGINAL IMAGE
@@ -533,6 +533,23 @@ class TimelineBuilder:
         )
         prompt = self.clean_visual_query(prompt)
 
+        generic_queries = {
+            "hotel interior",
+            "room interior",
+            "hotel exterior",
+            "hotel lobby",
+            "room",
+        }
+        if prompt in generic_queries and (context_before or context_after):
+            merged = f"{context_before} {text} {context_after}".strip()
+            contextual = self.query_generator.generate(
+                text=merged,
+                scene=scene,
+            )
+            contextual = self.clean_visual_query(contextual)
+            if contextual and contextual not in generic_queries:
+                prompt = contextual
+
 
         print(f"[SEARCH QUERY] {prompt}")
         self.visual_count += 1
@@ -557,7 +574,7 @@ class TimelineBuilder:
 
         if allow_original:
             result = self.find_original(
-                text=prompt,
+                text=text,
                 scene=scene,
             )
             if result:
@@ -782,9 +799,20 @@ class TimelineBuilder:
                 f"TEXT: {text}"
             )
 
+            context_before = (
+                str(segments[i - 1].get("text", "")).strip()
+                if i > 0 else ""
+            )
+            context_after = (
+                str(segments[i + 1].get("text", "")).strip()
+                if i < len(segments) - 1 else ""
+            )
+
             first_visual = self.select_visual(
                 text,
                 is_first=(i == 0 if intro_index is None else i == intro_index),
+                context_before=context_before,
+                context_after=context_after,
             )
 
             if first_visual is None:
@@ -805,6 +833,8 @@ class TimelineBuilder:
                 extra = self.select_visual(
                     text,
                     is_first=False,
+                    context_before=context_before,
+                    context_after=context_after,
                 )
                 if extra is None:
                     break
