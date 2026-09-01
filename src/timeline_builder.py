@@ -543,6 +543,7 @@ class TimelineBuilder:
         is_first=False,
         context_before="",
         context_after="",
+        is_new_sentence=True,
     ):
 
         scene_data = self.scene.analyze(text)
@@ -560,7 +561,13 @@ class TimelineBuilder:
         if not visual_queries:
             visual_queries = ["hotel exterior"]
 
-        if is_first:
+        # is_new_sentence marks the FIRST select_visual call for this
+        # sentence, regardless of whether it's the video's overall first
+        # visual (is_first). Without this distinction, every sentence's
+        # first call would immediately increment past concept[0] and,
+        # for a 2-concept sentence, land on and stay on the last concept
+        # for every visual piece of that sentence.
+        if is_new_sentence:
             self.current_visual_query_index = 0
         else:
             self.current_visual_query_index = min(
@@ -855,6 +862,7 @@ class TimelineBuilder:
                 is_first=(i == 0 if intro_index is None else i == intro_index),
                 context_before=context_before,
                 context_after=context_after,
+                is_new_sentence=True,
             )
 
             if first_visual is None:
@@ -877,6 +885,7 @@ class TimelineBuilder:
                     is_first=False,
                     context_before=context_before,
                     context_after=context_after,
+                    is_new_sentence=False,
                 )
                 if extra is None:
                     break
