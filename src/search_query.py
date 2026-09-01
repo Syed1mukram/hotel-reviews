@@ -1286,21 +1286,23 @@ class SearchQueryGenerator:
         return f"{best} travel landmark"
 
     def generate(self, text, scene="general"):
-        """Extract only explicit, visually representable concepts."""
+        """Deterministically extract concrete visual subjects from the sentence."""
         original = str(text).strip()
         t = re.sub(r"\s+", " ", original.lower())
         t = t.replace("wi-fi", "wifi").replace("wi fi", "wifi")
         t = t.replace("mini-fridge", "mini fridge")
+        t = t.replace("air-conditioned", "air conditioned")
 
+        # (phrase variants, canonical visual query)
         rules = [
             (("family suite",), "family suite"),
             (("studio suite", "full suite"), "hotel suite"),
             (("bunk beds", "bunk bed"), "bunk beds"),
             (("king bed", "queen bed", "twin beds", "twin bed"), "bed"),
-            (("bedroom", "bed", "beds", "mattress", "pillow"), "bed"),
+            (("bedroom", "beds", "bed", "mattress", "pillow"), "bed"),
             (("private balcony", "balcony", "terrace", "patio", "veranda"), "balcony"),
 
-            (("bathroom", "shower", "bathtub", "walk-in shower", "toilet"), "bathroom"),
+            (("bathroom", "private bathroom", "shower", "bathtub", "walk-in shower", "toilet"), "bathroom"),
             (("toiletries", "shampoo", "conditioner", "soap", "body wash", "toothbrush", "toothpaste", "towels"), "bathroom toiletries"),
             (("wifi", "wireless internet", "internet access", "free internet", "high-speed internet"), "wifi"),
             (("air conditioning", "air conditioner", "air conditioned", "climate control"), "air conditioning"),
@@ -1312,7 +1314,7 @@ class SearchQueryGenerator:
             (("swimming pool", "infinity pool", "outdoor pool", "indoor pool", "poolside", "pool area", "pool"), "swimming pool"),
             (("spa", "massage", "wellness", "sauna", "steam room", "treatment"), "spa"),
             (("gym", "fitness center", "fitness centre", "fitness room", "workout", "exercise"), "gym"),
-            (("game room", "games room"), "game room"),
+            (("game room", "games room", "game area", "games area"), "game room"),
             (("meeting room", "business center", "business centre", "conference room", "conference", "workspace"), "meeting room"),
 
             (("restaurant", "restaurants", "dining", "dinner", "lunch", "buffet", "meal", "food", "coffee shop", "cafe"), "restaurant dining"),
@@ -1337,6 +1339,7 @@ class SearchQueryGenerator:
             (("stadium", "sports stadium"), "stadium"),
             (("landmark", "landmarks", "monument", "historic site", "historical site"), "city landmark"),
             (("beach", "beaches", "beachfront", "ocean", "sea", "coast", "shore", "lagoon"), "beach ocean"),
+
             (("snorkeling", "snorkelling"), "snorkeling"),
             (("scuba diving", "diving", "scuba dive"), "scuba diving"),
             (("kayaking", "kayak"), "kayaking"),
@@ -1353,7 +1356,7 @@ class SearchQueryGenerator:
         ]
 
         hits = []
-        for rule_no, (terms, query) in enumerate(rules):
+        for rule_id, (terms, query) in enumerate(rules):
             positions = []
             for term in terms:
                 m = re.search(
@@ -1363,32 +1366,40 @@ class SearchQueryGenerator:
                 if m:
                     positions.append(m.start())
             if positions:
-                hits.append((min(positions), rule_no, query))
+                hits.append((min(positions), rule_id, query))
 
-        found = []
-        for _, _, query in sorted(hits):
-            if query not in found:
-                found.append(query)
+        concepts = []
+        for _, _, query in sorted(hits, key=lambda x: (x[0], x[1])):
+            if query not in concepts:
+                concepts.append(query)
 
-        if found:
-            return " || ".join(found[:4])
+        if concepts:
+            return " || ".join(concepts[:4])
 
-        # Only a genuine named place can be a fallback query.
+        # Explicitly visual historical/design cues.
+        if re.search(r"\b(1940s|1950s|1960s|mid[- ]century|retro|historic|history|architecture|arches|tile work|courtyard|decor)\b", t):
+            return "historic hotel exterior"
+
+        # Explicit traveler/person visual cues.
+        if re.search(r"\b(guests|guest|travelers|traveler|families|family|couples|children|kids)\b", t):
+            return "hotel guests travel"
+
+        # Named place only when it is actually present.
         candidates = re.findall(
             r"\b[A-Z][A-Za-z']+(?:\s+[A-Z][A-Za-z']+){1,5}\b",
             original,
         )
-        reject = (
+        rejected = (
             "There", "This", "Today", "Before", "First", "One Guest",
             "The Hotel", "The Property", "A Bit", "In Fact",
-            "What Guests", "Another", "Multiple Travelers",
+            "Another Traveler", "Multiple Travelers",
         )
         for candidate in sorted(candidates, key=len, reverse=True):
-            if candidate.startswith(reject):
+            if candidate.startswith(rejected):
                 continue
             return f"{candidate} landmark"
 
-        # Safe scene fallback only.
+        # Abstract sentences: choose a neutral property visual, never arbitrary prose.
         scene_l = str(scene).lower()
         for key, query in (
             ("pool", "swimming pool"),
@@ -1404,4 +1415,4 @@ class SearchQueryGenerator:
             if key in scene_l:
                 return query
 
-        return "hotel interior"
+        return "hotel exterior"

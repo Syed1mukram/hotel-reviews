@@ -78,6 +78,8 @@ class TimelineBuilder:
         self.visual_count = 0
         self.current_visual_queries = []
         self.current_visual_query_index = 0
+        self.current_sentence_id = -1
+        self.current_visual_query_index = 0
 
         # Target approximately 15% stock images.
         # Selection is based on visual_count and remains separate
@@ -556,13 +558,11 @@ class TimelineBuilder:
         ]
 
         if not visual_queries:
-            visual_queries = ["hotel interior"]
+            visual_queries = ["hotel exterior"]
 
-        # First visual uses concept 0. Each later visual moves to the next
-        # concept, so "pool + spa + gym" becomes pool -> spa -> gym.
         if is_first:
             self.current_visual_query_index = 0
-        elif len(visual_queries) > 1:
+        else:
             self.current_visual_query_index = min(
                 self.current_visual_query_index + 1,
                 len(visual_queries) - 1,
