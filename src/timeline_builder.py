@@ -76,6 +76,8 @@ class TimelineBuilder:
         self.stock_image_count = 0
         self.stock_video_count = 0
         self.visual_count = 0
+        self.current_visual_queries = []
+        self.current_visual_query_index = 0
 
         # Target approximately 15% stock images.
         # Selection is based on visual_count and remains separate
@@ -96,7 +98,21 @@ class TimelineBuilder:
         text,
         scene,
     ):
-        """Force the first visual to be an unused original hotel image."""
+        """Force intro.jpg to be the very first visual when available."""
+        intro = self.images_dir / "intro.jpg"
+        if intro.exists():
+            key = str(intro.resolve())
+            if key not in self.used_visuals:
+                self.used_visuals.add(key)
+                self.recent_visuals.append("original")
+                return {
+                    "media": intro,
+                    "media_type": "image",
+                    "source_type": "original",
+                    "label": None,
+                    "score": 1.0,
+                }
+
         result = self.matcher.find_best(
             prompt=text,
             scene=scene,
@@ -157,6 +173,9 @@ class TimelineBuilder:
         key = str(
             image_path.resolve()
         )
+
+        if image_path.name.lower().startswith("intro."):
+            return None
 
         if key in self.used_visuals:
             return None
@@ -527,29 +546,29 @@ class TimelineBuilder:
         scene_data = self.scene.analyze(text)
         scene = scene_data["scene"]
 
-        prompt = self.query_generator.generate(
-            text=text,
-            scene=scene,
-        )
-        prompt = self.clean_visual_query(prompt)
-
-        generic_queries = {
-            "hotel interior",
-            "room interior",
-            "hotel exterior",
-            "hotel lobby",
-            "room",
-        }
-        if prompt in generic_queries and (context_before or context_after):
-            merged = f"{context_before} {text} {context_after}".strip()
-            contextual = self.query_generator.generate(
-                text=merged,
-                scene=scene,
+        visual_queries = self.current_visual_queries or [
+            self.clean_visual_query(
+                q
             )
-            contextual = self.clean_visual_query(contextual)
-            if contextual and contextual not in generic_queries:
-                prompt = contextual
+            for q in self.query_generator.generate(
+                text=text,
+                scene=scene,
+            ).split("||")
+            if q.strip()
+        ]
 
+        if not visual_queries:
+            visual_queries = ["hotel interior"]
+
+        if not is_first and len(visual_queries) > 1:
+            self.current_visual_query_index = min(
+                self.current_visual_query_index + 1,
+                len(visual_queries) - 1,
+            )
+
+        prompt = self.clean_visual_query(
+            visual_queries[self.current_visual_query_index]
+        )
 
         print(f"[SEARCH QUERY] {prompt}")
         self.visual_count += 1
@@ -788,6 +807,27 @@ class TimelineBuilder:
 
             if not text:
                 continue
+
+            context_before = (
+                str(segments[i - 1].get("text", "")).strip()
+                if i > 0 else ""
+            )
+            context_after = (
+                str(segments[i + 1].get("text", "")).strip()
+                if i < len(segments) - 1 else ""
+            )
+
+            self.current_visual_queries = [
+                self.clean_visual_query(q)
+                for q in self.query_generator.generate(
+                    text=text,
+                    scene=self.scene.analyze(text)["scene"],
+                ).split("||")
+                if q.strip()
+            ]
+            if not self.current_visual_queries:
+                self.current_visual_queries = ["hotel interior"]
+            self.current_visual_query_index = 0
 
             print(
                 f"\n[{i:03d}] "

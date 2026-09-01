@@ -1286,15 +1286,7 @@ class SearchQueryGenerator:
         return f"{best} travel landmark"
 
     def generate(self, text, scene="general"):
-        """
-        Return one clean, natural-language visual query for Pexels.
-
-        Rules:
-        - Prefer the most specific concrete visual mentioned.
-        - Do not add "hotel" to generic objects/activities.
-        - Use location only for named places / destination-specific searches.
-        - Never return raw prose, pipe separators, or duplicated location text.
-        """
+        """Return ordered concrete visual queries separated by ' || '."""
         original = str(text).strip()
         t = re.sub(r"\s+", " ", original.lower())
         t = t.replace("wi-fi", "wifi").replace("wi fi", "wifi")
@@ -1302,30 +1294,29 @@ class SearchQueryGenerator:
         t = t.replace("air-conditioned", "air conditioned")
         t = t.replace("smag", "smeg")
 
-        # More specific concepts are listed first.
         rules = [
-            (("family suite",), "family suite"),
-            (("bunk beds", "bunk bed"), "bunk beds"),
-            (("electric kettle", "smeg"), "electric kettle"),
-            (("coffee maker", "coffee machine", "tea maker"), "coffee maker"),
-            (("mini fridge", "minibar", "mini bar", "refrigerator", "fridge"), "mini fridge"),
-            (("bathroom", "shower", "bathtub", "walk-in shower", "toilet"), "bathroom"),
-            (("toiletries", "shampoo", "conditioner", "soap", "body wash", "toothbrush", "toothpaste", "towels"), "bathroom toiletries"),
-            (("wifi", "wireless internet", "internet access", "free internet", "high-speed internet"), "wifi"),
-            (("air conditioning", "air conditioner", "air conditioned", "climate control"), "air conditioning"),
-            (("king bed", "queen bed", "twin beds", "twin bed", "bedroom", "bed", "beds", "mattress", "pillow"), "bed"),
-            (("television", "tv", "smart tv", "flat-screen tv", "flat screen tv"), "television"),
-            (("balcony", "terrace", "private terrace", "patio", "veranda"), "balcony"),
-            (("ocean view", "sea view", "water view", "mountain view", "garden view", "city view", "scenic view", "panoramic view"), "scenic view"),
             (("swimming pool", "infinity pool", "outdoor pool", "indoor pool", "poolside", "pool area", "pool"), "swimming pool"),
-            (("hot tub", "jacuzzi", "whirlpool"), "jacuzzi"),
             (("spa", "massage", "wellness", "sauna", "steam room", "treatment"), "spa"),
             (("gym", "fitness center", "fitness centre", "fitness room", "workout", "exercise"), "gym"),
             (("game room", "games room"), "game room"),
             (("meeting room", "business center", "business centre", "conference room", "conference", "workspace"), "meeting room"),
+            (("family suite",), "family suite"),
+            (("studio suite", "suite"), "hotel suite"),
+            (("bunk beds", "bunk bed"), "bunk beds"),
+            (("king bed", "queen bed", "twin beds", "twin bed", "bedroom", "bed", "beds", "mattress", "pillow"), "bed"),
+            (("balcony", "terrace", "private terrace", "patio", "veranda"), "balcony"),
+            (("bathroom", "shower", "bathtub", "walk-in shower", "toilet"), "bathroom"),
+            (("toiletries", "shampoo", "conditioner", "soap", "body wash", "toothbrush", "toothpaste", "towels"), "bathroom toiletries"),
+            (("wifi", "wireless internet", "internet access", "free internet", "high-speed internet"), "wifi"),
+            (("air conditioning", "air conditioner", "air conditioned", "climate control"), "air conditioning"),
+            (("mini fridge", "minibar", "mini bar", "refrigerator", "fridge"), "mini fridge"),
+            (("coffee maker", "coffee machine", "tea maker"), "coffee maker"),
+            (("electric kettle", "smeg"), "electric kettle"),
+            (("television", "tv", "smart tv", "flat-screen tv", "flat screen tv"), "television"),
+            (("ocean view", "sea view", "water view", "mountain view", "garden view", "city view", "scenic view", "panoramic view"), "scenic view"),
+            (("restaurant", "restaurants", "dining", "dinner", "lunch", "buffet", "meal", "food", "coffee shop", "cafe"), "restaurant dining"),
             (("room service", "in-room dining", "in room dining"), "room service"),
             (("breakfast", "breakfast buffet", "morning meal"), "breakfast"),
-            (("restaurant", "restaurants", "dining", "dinner", "lunch", "buffet", "meal", "food", "coffee shop", "cafe"), "restaurant dining"),
             (("bar", "cocktail", "drinks", "beverages", "lounge"), "bar lounge"),
             (("parking", "car park", "parking lot", "parking garage", "free parking"), "parking lot cars"),
             (("electric car charging", "ev charging", "charging station"), "ev charging station"),
@@ -1335,7 +1326,6 @@ class SearchQueryGenerator:
             (("check-out", "check out", "departure"), "hotel checkout"),
             (("credit card", "debit card", "card payment", "payment card"), "card payment"),
             (("security deposit", "refundable deposit", "deposit required", "cash deposit"), "security deposit"),
-            (("reservation", "reservations", "booking", "booked"), "hotel booking"),
             (("pet friendly", "pet-friendly", "pet policy", "pet fee", "dogs", "dog", "cats", "cat", "pets", "pet"), "pet friendly dog"),
             (("museum", "museums"), "museum"),
             (("temple", "temples"), "temple"),
@@ -1357,33 +1347,45 @@ class SearchQueryGenerator:
             (("golf", "golf course", "golf club"), "golf course"),
             (("tennis", "tennis court"), "tennis court"),
             (("water sports", "watersports"), "water sports"),
-            (("five star", "four star"), "luxury hotel"),
-            (("rated", "rating", "ratings", "score", "guest reviews", "reviews", "review"), "guest review"),
-            (("price", "prices", "cost", "budget", "expensive", "affordable", "cheap", "per night", "taxes", "fees"), "price tag booking"),
         ]
 
-        def has(term):
-            return re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])", t) is not None
-
+        hits = []
         for terms, query in rules:
-            if any(has(term) for term in terms):
-                return query
+            positions = []
+            for term in terms:
+                positions.extend(
+                    m.start()
+                    for m in re.finditer(
+                        r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])",
+                        t,
+                    )
+                )
+            if positions:
+                hits.append((min(positions), query))
 
-        # Proper-noun place extraction, only when no stronger visual exists.
-        patterns = [
-            r"\b([A-Z][a-zA-Z']+(?:\s+(?:of|the|and)\s+)?(?:\s+[A-Z][a-zA-Z']+)+)\b"
-        ]
-        for pattern in patterns:
-            matches = re.findall(pattern, original)
-            if matches:
-                candidate = max(matches, key=len).strip()
-                if candidate.lower() not in {
-                    "there is", "this is", "the property", "one guest"
-                }:
-                    return f"{candidate} landmark"
+        found = []
+        for _, query in sorted(hits, key=lambda x: x[0]):
+            if query not in found:
+                found.append(query)
+
+        if found:
+            return " || ".join(found[:4])
+
+        # Abstract sentences: no concrete visual claim, so avoid inventing a
+        # review/rating/price visual just because those words are present.
+        abstract = {
+            "review", "reviews", "rating", "ratings", "score", "price",
+            "prices", "cost", "budget", "value", "beautiful", "clean",
+            "service", "history", "pattern", "conclusion", "insider", "tip",
+            "built", "booking",
+        }
+        words = re.findall(r"[a-z0-9]+", t)
+        useful = [w for w in words if len(w) >= 3 and w not in abstract]
+        if useful:
+            return " ".join(dict.fromkeys(useful[:5]))
 
         scene_l = str(scene).lower()
-        defaults = [
+        for key, query in [
             ("bathroom", "bathroom"),
             ("pool", "swimming pool"),
             ("spa", "spa"),
@@ -1392,10 +1394,7 @@ class SearchQueryGenerator:
             ("room", "room interior"),
             ("lobby", "hotel lobby"),
             ("outside", "hotel exterior"),
-            ("location", "city travel"),
-            ("review", "five star hotel"),
-        ]
-        for key, query in defaults:
+        ]:
             if key in scene_l:
                 return query
 
