@@ -1286,7 +1286,7 @@ class SearchQueryGenerator:
         return f"{best} travel landmark"
 
     def generate(self, text, scene="general"):
-        """Return ordered concrete visual queries separated by ' || '."""
+        """Return only useful, concrete visual queries, in spoken order."""
         original = str(text).strip()
         t = re.sub(r"\s+", " ", original.lower())
         t = t.replace("wi-fi", "wifi").replace("wi fi", "wifi")
@@ -1301,7 +1301,7 @@ class SearchQueryGenerator:
             (("game room", "games room"), "game room"),
             (("meeting room", "business center", "business centre", "conference room", "conference", "workspace"), "meeting room"),
             (("family suite",), "family suite"),
-            (("studio suite", "suite"), "hotel suite"),
+            (("studio suite",), "hotel suite"),
             (("bunk beds", "bunk bed"), "bunk beds"),
             (("king bed", "queen bed", "twin beds", "twin bed", "bedroom", "bed", "beds", "mattress", "pillow"), "bed"),
             (("balcony", "terrace", "private terrace", "patio", "veranda"), "balcony"),
@@ -1350,51 +1350,57 @@ class SearchQueryGenerator:
         ]
 
         hits = []
-        for terms, query in rules:
-            positions = []
+        for order, (terms, query) in enumerate(rules):
+            pos = []
             for term in terms:
-                positions.extend(
+                pos.extend(
                     m.start()
                     for m in re.finditer(
                         r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])",
                         t,
                     )
                 )
-            if positions:
-                hits.append((min(positions), query))
+            if pos:
+                hits.append((min(pos), order, query))
 
         found = []
-        for _, query in sorted(hits, key=lambda x: x[0]):
+        for _, _, query in sorted(hits):
             if query not in found:
                 found.append(query)
 
+        # Location-specific visual only when an explicit place is genuinely present.
         if found:
             return " || ".join(found[:4])
 
-        # Abstract sentences: no concrete visual claim, so avoid inventing a
-        # review/rating/price visual just because those words are present.
-        abstract = {
-            "review", "reviews", "rating", "ratings", "score", "price",
-            "prices", "cost", "budget", "value", "beautiful", "clean",
-            "service", "history", "pattern", "conclusion", "insider", "tip",
-            "built", "booking",
-        }
-        words = re.findall(r"[a-z0-9]+", t)
-        useful = [w for w in words if len(w) >= 3 and w not in abstract]
-        if useful:
-            return " ".join(dict.fromkeys(useful[:5]))
+        place_candidates = [
+            m.group(0).strip()
+            for m in re.finditer(
+                r"\b[A-Z][A-Za-z']+(?:\s+[A-Z][A-Za-z']+){1,5}\b",
+                original,
+            )
+        ]
+        bad_place_bits = (
+            "there", "this", "today", "before", "first", "one guest",
+            "the hotel", "the property", "a bit", "in fact",
+        )
+        for candidate in sorted(place_candidates, key=len, reverse=True):
+            low = candidate.lower()
+            if not any(bit in low for bit in bad_place_bits):
+                return f"{candidate} landmark"
 
+        # Safe scene fallbacks only. Never send arbitrary sentence fragments to Pexels.
         scene_l = str(scene).lower()
-        for key, query in [
-            ("bathroom", "bathroom"),
+        for key, query in (
             ("pool", "swimming pool"),
             ("spa", "spa"),
             ("gym", "gym"),
+            ("bathroom", "bathroom"),
             ("restaurant", "restaurant dining"),
-            ("room", "room interior"),
+            ("suite", "hotel suite"),
+            ("bed", "bed"),
             ("lobby", "hotel lobby"),
             ("outside", "hotel exterior"),
-        ]:
+        ):
             if key in scene_l:
                 return query
 
