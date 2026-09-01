@@ -1,1420 +1,1006 @@
 import re
+from pathlib import Path
+from collections import deque
+
+from moviepy.audio.io.AudioFileClip import AudioFileClip
+
+from src.transcript import TranscriptGenerator
+from src.scene_analyzer import SceneAnalyzer
+from src.image_matcher import ImageMatcher
+from src.pexels_api import PexelsAPI
+from src.search_query import SearchQueryGenerator
 
 
-class SearchQueryGenerator:
+class TimelineBuilder:
 
-    def __init__(self):
-        pass
+    def __init__(
+        self,
+        audio_file,
+        images_dir,
+    ):
 
-    # ---------------------------------------------------------
-    # LOCATION
-    # Generic extraction — no hardcoded destination list
-    # ---------------------------------------------------------
-
-    def find_location(self, text):
-        text = re.sub(r"\s+", " ", text.lower().strip())
-
-        patterns = [
-            r"\b(?:in|at|from|near|around|outside|within)\s+"
-            r"([a-z][a-z .'-]{2,50}?)(?=\s+(?:and|but|with|where|which|"
-            r"that|this|the|is|are|was|were|has|have|offers|features|"
-            r"provides|you|we|it|they)\b|[,.!?]|$)",
-
-            r"\b(?:located|situated|based)\s+(?:in|at|near)\s+"
-            r"([a-z][a-z .'-]{2,50}?)(?=\s+(?:and|but|with|where|which|"
-            r"that|this|the|is|are|was|were|has|have|offers|features|"
-            r"provides|you|we|it|they)\b|[,.!?]|$)",
+        self.stock_image_topics = [
+            "breakfast food",
+            "restaurant food",
+            "happy family vacation",
+            "tourists exploring",
+            "tropical beach",
+            "ocean beach",
+            "mountain landscape",
+            "tropical nature",
+            "sunset landscape",
+            "travelers walking",
+            "boat island",
+            "local street",
+            "travel activity",
+            "swimming",
         ]
 
-        stop_words = {
-            "the", "hotel", "resort", "property", "area", "city",
-            "country", "there", "here", "this", "that", "a", "an",
-            "major attractions", "major attraction"
-        }
-
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if not match:
-                continue
-
-            location = re.sub(r"\s+", " ", match.group(1).strip(" ,.-"))
-
-            # Avoid capturing an ordinary noun phrase as a destination.
-            if location in stop_words:
-                continue
-
-            # Keep the extracted location compact.
-            words = location.split()
-            if len(words) > 6:
-                location = " ".join(words[:6])
-
-            if len(location) >= 3:
-                return location
-
-        return ""
-
-    # ---------------------------------------------------------
-    # SPECIFIC VISUAL KEYWORDS
-    # Multiple matches are combined
-    # ---------------------------------------------------------
-
-    def specific_visual_query(self, text):
-
-        # -----------------------------------------------------
-        # PET-FRIENDLY / SERVICE ANIMALS
-        # -----------------------------------------------------
-
-        pet_rules = [
-            ([
-                "pets are allowed",
-                "pets are welcome",
-                "pet friendly",
-                "pet-friendly",
-                "pet friendly hotel",
-                "dogs are allowed",
-                "dogs are welcome",
-                "cats are allowed",
-                "cats are welcome",
-            ], "pet friendly hotel dog"),
-
-            ([
-                "service animal",
-                "service animals",
-                "service dog",
-                "guide dog",
-                "assistance dog",
-                "assistance animal",
-            ], "service dog hotel travel"),
-        ]
-
-        for keywords, query in pet_rules:
-            if any(keyword in text for keyword in keywords):
-                return query
-
-
-        visuals = []
-
-        categories = [
-
-            # PETS
-            ([
-                "dog", "dogs", "cat", "cats", "pet", "pets",
-                "pet policy", "pet fee",
-            ], "pet friendly hotel dog"),
-
-            # SERVICE ANIMALS
-            ([
-                "service animal", "service dog", "guide dog",
-                "assistance animal",
-            ], "service dog hotel travel"),
-
-            # ROOM
-            (
-                [
-                    "bed",
-                    "bedroom",
-                    "king bed",
-                    "queen bed",
-                    "twin beds",
-                    "mattress",
-                    "pillow",
-                    "extra bed",
-                    "crib",
-                    "cot",
-                ],
-                "bed",
-            ),
-
-            # AC
-            (
-                [
-                    "air conditioning",
-                    "air conditioner",
-                    "air-conditioned",
-                    "air conditioned",
-                    "central air",
-                    "climate control",
-                ],
-                "air conditioner",
-            ),
-
-            # WIFI
-            (
-                [
-                    "wi-fi",
-                    "wifi",
-                    "wireless internet",
-                    "internet access",
-                    "free internet",
-                    "high-speed internet",
-                ],
-                "wifi",
-            ),
-
-            # TV
-            (
-                [
-                    "television",
-                    "tv",
-                    "smart tv",
-                    "flat-screen tv",
-                    "flat screen tv",
-                ],
-                "television",
-            ),
-
-            # PARKING
-            (
-                [
-                    "parking",
-                    "car park",
-                    "parking lot",
-                    "parking garage",
-                    "free parking",
-                    "complimentary parking",
-                ],
-                "hotel parking lot cars",
-            ),
-
-            # SHUTTLE
-            (
-                [
-                    "shuttle",
-                    "shuttle",
-                    "airport transfer",
-                    "airport shuttle",
-                    "airport transportation",
-                    "transfer service",
-                ],
-                "hotel shuttle airport transfer",
-            ),
-
-            # CAR RENTAL
-            (
-                [
-                    "car rental",
-                    "rental car",
-                    "rent a car",
-                    "hire a car",
-                ],
-                "car rental travel",
-            ),
-
-            # BATHROOM
-            (
-                [
-                    "bathroom",
-                    "shower",
-                    "bathtub",
-                    "walk-in shower",
-                    "toilet",
-                    "toiletries",
-                    "hairdryer",
-                    "hair dryer",
-                ],
-                "luxury hotel bathroom shower",
-            ),
-
-            # FRIDGE / MINIBAR
-            (
-                [
-                    "mini-fridge",
-                    "mini fridge",
-                    "minibar",
-                    "mini bar",
-                    "refrigerator",
-                    "fridge",
-                ],
-                "hotel room mini fridge",
-            ),
-
-            # COFFEE
-            (
-                [
-                    "coffee maker",
-                    "coffee machine",
-                    "tea maker",
-                    "kettle",
-                    "electric kettle",
-                ],
-                "hotel room coffee maker",
-            ),
-
-            # BREAKFAST
-            (
-                [
-                    "breakfast",
-                    "breakfast buffet",
-                    "morning meal",
-                ],
-                "hotel breakfast buffet",
-            ),
-
-            # RESTAURANT
-            (
-                [
-                    "restaurant",
-                    "dining",
-                    "dinner",
-                    "lunch",
-                    "buffet",
-                    "meal",
-                    "food",
-                    "cafe",
-                ],
-                "restaurant dining",
-            ),
-
-            # BAR / LOUNGE
-            (
-                [
-                    "bar",
-                    "cocktail",
-                    "drinks",
-                    "beverages",
-                    "lounge",
-            ],
-                "hotel lounge drinks",
-            ),
-
-            # POOL
-            (
-                [
-                    "swimming pool",
-                    "pool",
-                    "infinity pool",
-                    "outdoor pool",
-                    "indoor pool",
-                    "poolside",
-                    "pool area",
-                ],
-                "luxury resort swimming pool",
-            ),
-
-            # JACUZZI
-            (
-                [
-                    "hot tub",
-                    "jacuzzi",
-                    "whirlpool",
-                ],
-                "hotel jacuzzi hot tub",
-            ),
-
-            # BEACH
-            (
-                [
-                    "beach access",
-                    "private beach",
-                    "beachfront",
-                    "beach front",
-                ],
-                "beachfront tropical resort",
-            ),
-
-            # OCEAN
-            (
-                [
-                    "ocean",
-                    "sea",
-                    "seaside",
-                    "oceanfront",
-                    "seafront",
-                ],
-                "tropical ocean resort",
-            ),
-
-            # BALCONY
-            (
-                [
-                    "balcony",
-                    "terrace",
-                    "private terrace",
-                    "patio",
-                    "veranda",
-                ],
-                "luxury hotel balcony terrace",
-            ),
-
-            # VIEWS
-            (
-                [
-                    "ocean view",
-                    "sea view",
-                    "water view",
-                    "mountain view",
-                    "garden view",
-                    "city view",
-                    "scenic view",
-                    "panoramic view",
-                ],
-                "hotel scenic view balcony",
-            ),
-
-            # GYM
-            (
-                [
-                    "gym",
-                    "fitness center",
-                    "fitness centre",
-                    "fitness room",
-                    "workout",
-                    "exercise",
-                ],
-                "hotel gym fitness center",
-            ),
-
-            # TENNIS
-            (
-                [
-                    "tennis",
-                    "tennis court",
-                ],
-                "hotel tennis court",
-            ),
-
-            # GOLF
-            (
-                [
-                    "golf",
-                    "golf course",
-                    "golf club",
-                ],
-                "resort golf course",
-            ),
-
-            # BASKETBALL
-            (
-                [
-                    "basketball",
-                    "basketball court",
-                ],
-                "hotel basketball court",
-            ),
-
-            # VOLLEYBALL
-            (
-                [
-                    "volleyball",
-                    "beach volleyball",
-                ],
-                "resort volleyball",
-            ),
-
-            # BADMINTON
-            (
-                [
-                    "badminton",
-                ],
-                "hotel badminton court",
-            ),
-
-            # TABLE TENNIS
-            (
-                [
-                    "table tennis",
-                    "ping pong",
-                ],
-                "hotel table tennis",
-            ),
-
-            # BILLIARDS
-            (
-                [
-                    "billiards",
-                    "pool table",
-                    "snooker",
-                ],
-                "hotel billiards pool table",
-            ),
-
-            # WATER SPORTS
-            (
-                [
-                    "water sports",
-                    "watersports",
-                    "water sport",
-                ],
-                "tropical resort water sports",
-            ),
-
-            # SNORKELING
-            (
-                [
-                    "snorkeling",
-                    "snorkelling",
-                ],
-                "tropical snorkeling",
-            ),
-
-            # DIVING
-            (
-                [
-                    "scuba diving",
-                    "diving",
-                    "scuba dive",
-                    "dive center",
-                    "dive centre",
-                ],
-                "tropical scuba diving",
-            ),
-
-            # KAYAKING
-            (
-                [
-                    "kayaking",
-                    "kayak",
-                ],
-                "tropical kayaking",
-            ),
-
-            # PADDLEBOARD
-            (
-                [
-                    "paddleboard",
-                    "paddle boarding",
-                    "stand up paddle",
-                ],
-                "tropical paddle boarding",
-            ),
-
-            # SURFING
-            (
-                [
-                    "surfing",
-                    "surf",
-                ],
-                "tropical surfing",
-            ),
-
-            # CANOE
-            (
-                [
-                    "canoeing",
-                    "canoe",
-                ],
-                "tropical canoeing",
-            ),
-
-            # SAILING
-            (
-                [
-                    "sailing",
-                    "sailboat",
-                    "boat trip",
-                ],
-                "tropical sailing boat",
-            ),
-
-            # BOAT / ISLAND TOUR
-            (
-                [
-                    "boat tour",
-                    "boat trip",
-                    "island hopping",
-                    "island tour",
-                ],
-                "tropical island boat tour",
-            ),
-
-            # HIKING
-            (
-                [
-                    "hiking",
-                    "hike",
-                    "trekking",
-                    "trek",
-                ],
-                "tropical hiking adventure",
-            ),
-
-            # CYCLING
-            (
-                [
-                    "cycling",
-                    "bicycle",
-                    "bike",
-                    "biking",
-                ],
-                "tropical cycling vacation",
-            ),
-
-            # WALKING
-            (
-                [
-                    "walking tour",
-                    "nature walk",
-                    "walking trail",
-                ],
-                "tropical nature walk",
-            ),
-
-            # SIGHTSEEING
-            (
-                [
-                    "sightseeing",
-                    "city tour",
-                    "guided tour",
-                    "tour",
-                ],
-                "travel sightseeing tour",
-            ),
-
-            # ACTIVITIES
-            (
-                [
-                    "activity",
-                    "activities",
-                    "things to do",
-                    "recreation",
-                ],
-                "resort vacation activities",
-            ),
-
-            # SPA
-            (
-                [
-                    "spa",
-                    "massage",
-                    "wellness",
-                    "sauna",
-                    "steam room",
-                    "steam bath",
-                ],
-                "luxury hotel spa wellness",
-            ),
-
-            # YOGA
-            (
-                [
-                    "yoga",
-                    "yoga class",
-                    "meditation",
-                ],
-                "resort yoga meditation",
-            ),
-
-            # LOBBY
-            (
-                [
-                    "lobby",
-                    "reception",
-                    "front desk",
-                    "check-in",
-                    "check in",
-                    "check-out",
-                    "check out",
-                ],
-                "luxury hotel lobby reception",
-            ),
-
-            # STAFF
-            (
-                [
-                    "staff",
-                    "friendly staff",
-                    "helpful staff",
-                    "hospitality",
-                    "housekeeping",
-                    "concierge",
-                ],
-                "hotel staff hospitality service",
-            ),
-
-            # ROOM SERVICE
-            (
-                [
-                    "room service",
-                    "in-room dining",
-                    "in room dining",
-                ],
-                "hotel room service food",
-            ),
-
-            # KIDS
-            (
-                [
-                    "kids",
-                    "children",
-                    "kids club",
-                    "family activities",
-                    "playground",
-                    "play area",
-                ],
-                "family resort kids activities",
-            ),
-
-            # FAMILY
-            (
-                [
-                    "family friendly",
-                    "family-friendly",
-                    "family vacation",
-                ],
-                "family friendly resort",
-            ),
-
-            # BUSINESS
-            (
-                [
-                    "business center",
-                    "business centre",
-                    "meeting room",
-                    "conference room",
-                    "conference",
-                    "meeting",
-                    "workspace",
-                    "work space",
-                ],
-                "hotel business conference room",
-            ),
-
-            # LAUNDRY
-            (
-                [
-                    "laundry",
-                    "laundry service",
-                    "washing machine",
-                    "dry cleaning",
-                ],
-                "hotel laundry service",
-            ),
-
-            # SHOPPING
-            (
-                [
-                    "shopping",
-                    "shopping center",
-                    "shopping centre",
-                    "gift shop",
-                    "souvenir",
-                    "shops",
-                ],
-                "hotel shopping vacation",
-            ),
-
-            # GARDEN
-            (
-                [
-                    "garden",
-                    "gardens",
-                    "tropical garden",
-                    "landscaped grounds",
-                ],
-                "tropical resort garden",
-            ),
-
-            # ACCESSIBILITY
-            (
-                [
-                    "wheelchair",
-                    "accessible room",
-                    "accessibility",
-                    "wheelchair accessible",
-                    "accessible bathroom",
-                ],
-                "wheelchair accessible hotel",
-            ),
-
-            # SECURITY
-            (
-                [
-                    "security",
-                    "security guard",
-                    "24-hour security",
-                    "safe and secure",
-                ],
-                "hotel security entrance",
-            ),
-
-            # ENTRANCE
-            (
-                [
-                    "entrance",
-                    "hotel entrance",
-                    "front entrance",
-                    "driveway",
-                    "arrival",
-                ],
-                "luxury hotel entrance arrival",
-            ),
-
-            # OUTDOOR AREA
-            (
-                [
-                    "outdoor area",
-                    "outdoor space",
-                    "grounds",
-                    "courtyard",
-                    "terrace area",
-                ],
-                "luxury resort outdoor area",
-            ),
-
-            # PAYMENT / CREDIT CARD
-            (
-                [
-                    "credit card",
-                    "debit card",
-                    "card payment",
-                    "card payments",
-                    "pay by card",
-                    "payment card",
-                    "credit or debit card",
-                    "credit and debit card",
-                ],
-                "credit card debit card payment",
-            ),
-
-            # PAYMENT / CHECKOUT
-            (
-                [
-                    "payment",
-                    "paying by card",
-                    "checkout",
-                    "security deposit",
-                    "refundable deposit",
-                    "deposit required",
-                    "cash payment",
-                ],
-                "hotel payment checkout",
-            ),
-
-            (
-                [
-                    "credit card",
-                    "debit card",
-                    "card payment",
-                    "card payments",
-                    "pay by card",
-                    "payment card",
-                    "credit or debit card",
-                    "credit and debit card",
-                ],
-                "credit card debit card payment",
-            ),
-
-            # payment-related And terms
-
-            (
-                [
-                    "paying by card",
-                    "security deposit",
-                    "cash payment",
-                ],
-                "hotel payment checkout",
-            ),
-
-
-            # TOILETRIES / ROOM AMENITIES
-            (
-                [
-                    "toiletries", "toiletry", "shampoo", "conditioner",
-                    "soap", "body wash", "toothbrush", "toothpaste",
-                    "towels", "bathrobe", "slippers",
-                ],
-                "hotel room toiletries amenities",
-            ),
-
-            # HOUSEKEEPING / CLEANING
-            (
-                [
-                    "cleaning", "clean", "housekeeping service",
-                    "cleaned", "cleanliness", "room cleaning",
-                ],
-                "hotel housekeeping room cleaning",
-            ),
-
-            # LOCATION / CENTRAL LOCATION
-            (
-                [
-                    "centrally located", "central location",
-                    "central", "located near", "close to",
-                    "nearby", "walking distance",
-                ],
-                "hotel location city attractions",
-            ),
-
-            # CITY / DOWNTOWN
-            (
-                [
-                    "downtown", "city center", "city centre",
-                    "town center", "town centre",
-                ],
-                "city center hotel location",
-            ),
-
-            # LANDMARKS / TEMPLES / MUSEUMS
-            (
-                [
-                    "temple", "temples", "church", "mosque",
-                    "museum", "museums", "landmark", "monument",
-                ],
-                "tourist landmark temple museum",
-            ),
-
-            # TRANSPORTATION
-            (
-                [
-                    "taxi", "taxis", "bus", "buses", "transport",
-                    "transportation", "public transport", "airport",
-                    "airport transfer", "transfer",
-                ],
-                "travel transportation taxi airport",
-            ),
-
-            # CHECK-IN / CHECK-OUT
-            (
-                [
-                    "check-in", "check in", "check-out", "check out",
-                    "arrival", "departure",
-                ],
-                "hotel check in reception",
-            ),
-
-            # RESERVATION / BOOKING
-            (
-                [
-                    "reservation", "reservations", "booking", "book",
-                    "booked", "availability",
-                ],
-                "hotel booking reservation",
-            ),
-
-            # PRICE / VALUE
-            (
-                [
-                    "price", "prices", "cost", "value", "budget",
-                    "expensive", "affordable", "cheap", "rate", "rates",
-                    "per night",
-                ],
-                "hotel price booking value",
-            ),
-
-            # ROOM SIZE / LAYOUT
-            (
-                [
-                    "spacious room", "large room", "small room",
-                    "room size", "living room", "sitting area",
-                    "suite", "suites",
-                ],
-                "spacious hotel room suite",
-            ),
-
-            # BED / SLEEP QUALITY
-            (
-                [
-                    "comfortable bed", "comfortable beds",
-                    "good sleep", "sleep quality", "sleeping",
-                    "comfortable mattress",
-                ],
-                "comfortable hotel bed bedroom",
-            ),
-
-            # VIEW / SCENERY
-            (
-                [
-                    "sunset", "sunrise", "scenery", "scenic",
-                    "panoramic", "view",
-                ],
-                "hotel scenic sunset view",
-            ),
-
-            # WIFI QUALITY
-            (
-                [
-                    "fast wifi", "fast wi-fi", "strong wifi",
-                    "strong wi-fi", "internet was fast",
-                    "internet worked", "wifi worked",
-                ],
-                "hotel wifi internet connection",
-            ),
-
-            # ELEVATOR
-            (
-                [
-                    "elevator", "lift", "lifts",
-                ],
-                "hotel elevator lift",
-            ),
-
-            # SMOKING
-            (
-                [
-                    "smoking", "smoke", "smoking area",
-                ],
-                "hotel smoking area policy",
-            ),
-
-            # SAFETY / SECURITY
-            (
-                [
-                    "safe", "safety", "secure", "security",
-                    "security guard", "24-hour security",
-                ],
-                "hotel security safety entrance",
-            ),
-
-            # ACCESS / ENTRANCE
-            (
-                [
-                    "entrance", "entrance area", "driveway",
-                    "arrival area", "front door", "main door",
-                ],
-                "hotel entrance arrival",
-            ),
-
-            # STAFF / HOSPITALITY
-            (
-                [
-                    "staff", "friendly staff", "helpful staff",
-                    "hospitality", "welcoming", "welcome",
-                    "receptionist", "concierge",
-                ],
-                "hotel staff hospitality service",
-            ),
-
-            # NATURE
-            (
-                [
-                    "nature",
-                    "jungle",
-                    "forest",
-                    "waterfall",
-                    "river",
-                    "lagoon",
-                    "wildlife",
-                ],
-                "tropical nature travel",
-            ),
-
-            # ATTRACTIONS
-            (
-                [
-                    "attraction",
-                    "attractions",
-                    "nearby attractions",
-                    "landmark",
-                    "landmarks",
-                ],
-                "travel destination attractions",
-            ),
-        ]
-
-        for keywords, query in categories:
-
-            matched = False
-
-            for keyword in keywords:
-
-                if re.search(r"(?<![a-z0-9])" + re.escape(keyword) + r"(?![a-z0-9])", text):
-
-                    matched = True
-                    break
-
-            if matched:
-
-                visuals.append(query)
-
-        # -----------------------------------------------------
-        # REMOVE DUPLICATES
-        # -----------------------------------------------------
-
-        unique = []
-
-        for visual in visuals:
-
-            if visual not in unique:
-
-                unique.append(visual)
-
-        # -----------------------------------------------------
-        # LIMIT QUERY LENGTH
-        # Pexels works better with concise queries
-        # -----------------------------------------------------
-
-        if unique:
-
-            words = []
-
-            for visual in unique:
-
-                for word in visual.split():
-
-                    if word not in words:
-
-                        words.append(word)
-
-            # Keep Pexels queries focused.
-            # Three visual concepts are usually enough.
-            return " ".join(words[:10])
-
-        return None
-
-    # ---------------------------------------------------------
-    # POLICY / NEGATIVE STATEMENTS
-    # ---------------------------------------------------------
-
-    def policy_query(self, text):
-
-        rules = [
-            ([
-                "pets aren't allowed",
-                "pets are not allowed",
-                "pet not allowed",
-                "pets not permitted",
-                "no pets",
-                "pets prohibited",
-            ], "hotel no pets policy"),
-
-            ([
-                "no smoking",
-                "smoking is not allowed",
-                "smoking isn't allowed",
-                "non-smoking",
-                "non smoking",
-            ], "hotel no smoking"),
-
-            ([
-                "no parking",
-                "no on-site parking",
-                "no onsite parking",
-                "parking is not available",
-                "parking isn't available",
-            ], "hotel parking unavailable"),
-
-            ([
-                "no wifi",
-                "no wi-fi",
-                "wifi is not available",
-                "wi-fi is not available",
-            ], "hotel wifi unavailable"),
-
-            ([
-                "no elevator",
-                "elevator is not available",
-                "no lift",
-                "no lift available",
-            ], "hotel elevator"),
-
-            ([
-                "no breakfast",
-                "breakfast is not included",
-                "breakfast isn't included",
-            ], "breakfast"),
-        ]
-
-        for keywords, query in rules:
-            if any(
-                re.search(
-                    r"(?<![a-z0-9])" + re.escape(keyword) + r"(?![a-z0-9])",
-                    text,
-                )
-                for keyword in keywords
-            ):
-                return query
-
-        return None
-
-    # ---------------------------------------------------------
-    # SEARCH QUERY
-    # ---------------------------------------------------------
-
-    def extract_visual_keywords(self, script_text, max_keywords=60):
-        """
-        Extract hotel/travel visual concepts directly from the supplied script.
-        No hardcoded destination list is required.
-        Returns unique keywords in first-appearance order.
-        """
-        text = re.sub(r"\s+", " ", str(script_text).lower()).strip()
-
-        keyword_patterns = [
-            ("hotel exterior", [r"\bhotel\b", r"\bresort\b", r"\bproperty\b",
-                                r"\bentrance\b", r"\bexterior\b"]),
-            ("hotel room", [r"\broom\b", r"\brooms\b", r"\bbedroom\b",
-                            r"\bsuite\b", r"\baccommodation\b"]),
-            ("bathroom", [r"\bbathroom\b", r"\bshower\b", r"\bbathtub\b",
-                                 r"\btoilet\b"]),
-            ("balcony", [r"\bbalcony\b", r"\bterrace\b", r"\bpatio\b",
-                         r"\bveranda\b"]),
-            ("room view", [r"\bocean view\b", r"\bsea view\b", r"\bwater view\b",
-                           r"\bmountain view\b", r"\bgarden view\b",
-                           r"\bcity view\b", r"\bscenic view\b"]),
-            ("air conditioning", [r"\bair conditioning\b", r"\bair conditioner\b",
-                                   r"\bair-conditioned\b"]),
-            ("wifi", [r"\bwi[\s-]?fi\b", r"\bwireless internet\b",
-                      r"\binternet access\b"]),
-            ("television", [r"\btelevision\b", r"\bsmart tv\b", r"\bflat[\s-]?screen tv\b"]),
-            ("mini fridge", [r"\bmini[\s-]?fridge\b", r"\bmini[\s-]?bar\b",
-                             r"\bminibar\b", r"\brefrigerator\b"]),
-            ("coffee maker", [r"\bcoffee maker\b", r"\bcoffee machine\b",
-                              r"\bkettle\b"]),
-            ("bed", [r"\bking bed\b", r"\bqueen bed\b", r"\btwin beds?\b",
-                     r"\bbed\b", r"\bmattress\b"]),
-            ("toiletries", [r"\btoiletries?\b", r"\bshampoo\b", r"\bsoap\b",
-                            r"\btowels?\b", r"\bbody wash\b"]),
-            ("breakfast", [r"\bbreakfast\b", r"\bbreakfast buffet\b"]),
-            ("restaurant", [r"\brestaurant\b", r"\bdining\b", r"\bdinner\b",
-                            r"\blunch\b", r"\bmeal\b", r"\bbuffet\b"]),
-            ("room service", [r"\broom service\b", r"\bin-room dining\b",
-                              r"\bin room dining\b"]),
-            ("pool", [r"\bswimming pool\b", r"\binfinity pool\b",
-                      r"\bpool\b", r"\bpoolside\b"]),
-            ("gym", [r"\bgym\b", r"\bfitness center\b", r"\bfitness centre\b"]),
-            ("spa", [r"\bspa\b", r"\bmassage\b", r"\bwellness\b",
-                     r"\bsauna\b"]),
-            ("staff", [r"\bstaff\b", r"\bhospitality\b", r"\bconcierge\b",
-                       r"\breceptionist\b"]),
-            ("housekeeping", [r"\bhousekeeping\b", r"\bcleanliness\b",
-                              r"\bcleaning\b", r"\bspotless\b"]),
-            ("parking", [r"\bparking\b", r"\bcar park\b", r"\bparking lot\b"]),
-            ("airport", [r"\bairport\b", r"\bairport transfer\b",
-                         r"\bairport shuttle\b"]),
-            ("transportation", [r"\btransportation\b", r"\btransport\b",
-                                r"\btaxi\b", r"\bshuttle\b", r"\bbus\b"]),
-            ("check in", [r"\bcheck-in\b", r"\bcheck in\b", r"\barrival\b"]),
-            ("check out", [r"\bcheck-out\b", r"\bcheck out\b", r"\bdeparture\b"]),
-            ("booking", [r"\bbooking\b", r"\breservation\b", r"\breserve\b"]),
-            ("family", [r"\bfamily\b", r"\bfamilies\b", r"\bkids\b",
-                        r"\bchildren\b"]),
-            ("business", [r"\bbusiness center\b", r"\bmeeting\b",
-                           r"\bconference\b", r"\bworkspace\b"]),
-            ("museum", [r"\bmuseum\b", r"\barchaeological\b"]),
-            ("temple", [r"\btemple\b", r"\btemples\b"]),
-            ("landmark", [r"\blandmark\b", r"\bmonument\b",
-                          r"\bhistoric site\b", r"\bhistorical site\b"]),
-            ("attractions", [r"\battraction\b", r"\battractions\b",
-                             r"\bsightseeing\b", r"\bthings to do\b"]),
-            ("beach", [r"\bbeach\b", r"\bbeachfront\b", r"\bocean\b",
-                       r"\bsea\b", r"\bcoast\b", r"\blagoon\b"]),
-            ("island", [r"\bisland\b", r"\bislands\b"]),
-            ("nature", [r"\bnature\b", r"\bjungle\b", r"\bforest\b",
-                        r"\bwaterfall\b", r"\bwildlife\b"]),
-            ("snorkeling", [r"\bsnorkeling\b", r"\bsnorkelling\b"]),
-            ("diving", [r"\bscuba diving\b", r"\bdiving\b"]),
-            ("kayaking", [r"\bkayaking\b", r"\bkayak\b"]),
-            ("surfing", [r"\bsurfing\b", r"\bsurf\b"]),
-            ("hiking", [r"\bhiking\b", r"\bhike\b", r"\btrekking\b"]),
-            ("cycling", [r"\bcycling\b", r"\bbicycle\b", r"\bbiking\b"]),
-            ("golf", [r"\bgolf\b", r"\bgolf course\b"]),
-            ("tennis", [r"\btennis\b"]),
-            ("water sports", [r"\bwater sports\b", r"\bwatersports\b"]),
-            ("credit card payment", [r"\bcredit card\b", r"\bdebit card\b",
-                                     r"\bpayment\b"]),
-            ("price", [r"\bprice\b", r"\bprices\b", r"\bcost\b",
-                       r"\bbudget\b", r"\baffordable\b", r"\bper night\b"]),
-            ("reviews", [r"\breview\b", r"\breviews\b", r"\brating\b",
-                         r"\bratings\b", r"\bscore\b"]),
-        ]
-
-        found = []
-        for label, patterns in keyword_patterns:
-            if any(re.search(pattern, text) for pattern in patterns):
-                found.append(label)
-                if len(found) >= max_keywords:
-                    break
-
-        return found
-
-    def match_visual_keywords(self, sentence, keywords):
-        """
-        Rank extracted script keywords for one sentence.
-        Matching is order-independent and based on keyword concepts.
-        """
-        text = re.sub(r"\s+", " ", str(sentence).lower()).strip()
-        matches = []
-
-        for keyword in keywords:
-            parts = keyword.split()
-            if all(re.search(r"(?<![a-z0-9])" + re.escape(part) +
-                             r"(?![a-z0-9])", text) for part in parts):
-                matches.append(keyword)
-
-        return matches
-
-    # ---------------------------------------------------------
-    # NAMED LANDMARK / PROPER NOUN FALLBACK
-    # Catches sentences that just state a place name directly
-    # ("Balboa Park sits about...") with no trigger keyword like
-    # "attraction" or "landmark" nearby.
-    # ---------------------------------------------------------
-
-    # Chain/brand names aren't landmarks — searching their own name risks
-    # pulling in branded logos or trademarked stock footage. Route these
-    # to the generic restaurant/dining query instead.
-    BRAND_NAMES = {
-        "mcdonald's", "mcdonalds", "starbucks", "taco bell", "wendy's",
-        "wendys", "burger king", "subway", "kfc", "dunkin", "dunkin'",
-        "chipotle", "domino's", "dominos", "pizza hut", "chick-fil-a",
-        "chick fil a", "7-eleven", "7 eleven", "walgreens", "cvs",
-    }
-
-    def _find_landmark_candidates(self, original_text):
-        """Return every distinct multi-word capitalized place name in the
-        sentence, each as (position, query), instead of picking only the
-        longest one. A sentence naming several landmarks (theaters, transit
-        centers, parks) should be able to cycle through all of them across
-        a long segment's multiple visual pieces, not repeat a single name."""
-        text = str(original_text)
-
-        candidates = re.finditer(
-            r"\b[A-Z][a-zA-Z']*(?:\s+(?:of|the|and)\s+[A-Z][a-zA-Z']*"
-            r"|\s+[A-Z][a-zA-Z']*)+\b",
-            text,
+        self.audio_file = Path(
+            audio_file
         )
 
-        generic_leads = {
-            "this is", "there is", "there's", "one guest", "one traveler",
-            "another traveler", "another minor", "no property",
-            "there", "this", "today", "before", "first",
-            "the hotel", "the property", "a bit", "in fact",
-            "multiple travelers",
+        self.images_dir = Path(
+            images_dir
+        )
+
+        self.transcript = (
+            TranscriptGenerator()
+        )
+
+        self.scene = (
+            SceneAnalyzer()
+        )
+
+        self.matcher = (
+            ImageMatcher()
+        )
+
+        self.pexels = (
+            PexelsAPI()
+        )
+
+        self.query_generator = (
+            SearchQueryGenerator()
+        )
+
+        # Every visual used in this video
+        self.used_visuals = set()
+
+        # Last visual source types
+        self.recent_visuals = deque(
+            maxlen=4
+        )
+
+        # Counters
+        self.stock_image_count = 0
+        self.stock_video_count = 0
+        self.visual_count = 0
+        self.current_visual_queries = []
+        self.current_visual_query_index = 0
+        self.current_sentence_id = -1
+        self.current_visual_query_index = 0
+
+        # Target approximately 15% stock images.
+        # Selection is based on visual_count and remains separate
+        # from original hotel images and GPU rendering.
+        self.stock_image_target_ratio = 0.15
+
+        # Minimum acceptable match score for an "original" hotel image.
+        # Below this, the match is too weak/generic to trust — fall
+        # back to stock instead of forcing an unrelated original photo.
+        self.min_original_score = 0.17
+
+    # =========================================================
+    # ORIGINAL IMAGE
+    # =========================================================
+
+    def find_first_original(
+        self,
+        text,
+        scene,
+    ):
+        """Force intro.jpg to be the very first visual when available."""
+        intro = self.images_dir / "intro.jpg"
+        if intro.exists():
+            key = str(intro.resolve())
+            if key not in self.used_visuals:
+                self.used_visuals.add(key)
+                self.recent_visuals.append("original")
+                return {
+                    "media": intro,
+                    "media_type": "image",
+                    "source_type": "original",
+                    "label": None,
+                    "score": 1.0,
+                }
+
+        result = self.matcher.find_best(
+            prompt=text,
+            scene=scene,
+        )
+
+        if not result:
+            result = self.matcher.find_best(
+                prompt="hotel exterior hotel resort",
+                scene="outside",
+            )
+
+        if not result:
+            return None
+
+        image_path, score = result
+        image_path = Path(image_path)
+        key = str(image_path.resolve())
+
+        if key in self.used_visuals:
+            return None
+
+        self.used_visuals.add(key)
+        self.recent_visuals.append("original")
+
+        return {
+            "media": image_path,
+            "media_type": "image",
+            "source_type": "original",
+            "label": None,
+            "score": score,
         }
 
-        seen = set()
-        results = []
-        for m in candidates:
-            name = m.group(0).strip()
-            low = name.lower()
-            if low in self.BRAND_NAMES or low in generic_leads or low in seen:
-                continue
-            seen.add(low)
-            results.append((m.start(), f"{name} landmark"))
+    def find_original(
+        self,
+        text,
+        scene,
+    ):
 
-        return results
+        result = self.matcher.find_best(
+            prompt=text,
+            scene=scene,
+        )
 
-    def extract_proper_nouns(self, original_text):
-        """Kept for backward compatibility: returns only the single best
-        (longest) landmark name as a plain string. Prefer
-        _find_landmark_candidates() for new code, which returns all of
-        them so multi-landmark sentences aren't collapsed to one repeat."""
-        candidates = self._find_landmark_candidates(original_text)
-        if not candidates:
-            return ""
-        best = max(candidates, key=lambda c: len(c[1]))
-        return best[1].replace(" landmark", " travel landmark")
+        if not result:
+            return None
 
-    def generate(self, text, scene="general"):
-        """Deterministically extract concrete visual subjects from the sentence."""
+        image_path, score = result
+
+        # Reject weak matches: better to fall back to a relevant
+        # stock clip than force an unrelated original hotel photo.
+        if score is not None and score < self.min_original_score:
+            return None
+
+        image_path = Path(
+            image_path
+        )
+
+        key = str(
+            image_path.resolve()
+        )
+
+        if image_path.name.lower().startswith("intro."):
+            return None
+
+        if key in self.used_visuals:
+            return None
+
+        self.used_visuals.add(
+            key
+        )
+
+        self.recent_visuals.append(
+            "original"
+        )
+
+        return {
+            "media": image_path,
+            "media_type": "image",
+            "source_type": "original",
+            "label": None,
+            "score": score,
+        }
+
+    # =========================================================
+    # STOCK VIDEO
+    # =========================================================
+
+    def find_stock_video(
+        self,
+        query,
+    ):
+
+        video = self.pexels.download(
+            query
+        )
+
+        if video is None:
+            return None
+
+        video = Path(
+            video
+        )
+
+        key = str(
+            video.resolve()
+        )
+
+        if key in self.used_visuals:
+            return None
+
+        self.used_visuals.add(
+            key
+        )
+
+        self.recent_visuals.append(
+            "stock_video"
+        )
+
+        return {
+            "media": video,
+            "media_type": "video",
+            "source_type": "stock_video",
+            "label": "STOCK VIDEO",
+            "score": None,
+        }
+
+    # =========================================================
+    # STOCK IMAGE
+    # =========================================================
+
+    def find_stock_image(
+        self,
+        query,
+    ):
+
+        if self.visual_count > 0:
+            target_images = max(
+                1,
+                int(
+                    self.visual_count
+                    * self.stock_image_target_ratio
+                )
+            )
+
+            if self.stock_image_count >= target_images:
+                return None
+
+        # Use the sentence-derived query directly.
+        stock_query = query.strip()
+
+        if not stock_query:
+            return None
+
+        print(
+            f"[STOCK IMAGE QUERY] "
+            f"{stock_query}"
+        )
+
+        image = self.pexels.download_image(
+            stock_query
+        )
+
+        if image is None:
+            return None
+
+        image = Path(image)
+
+        key = str(
+            image.resolve()
+        )
+
+        if key in self.used_visuals:
+            return None
+
+        self.used_visuals.add(
+            key
+        )
+
+        self.recent_visuals.append(
+            "stock_image"
+        )
+
+        self.stock_image_count += 1
+
+        return {
+            "media": image,
+            "media_type": "image",
+            "source_type": "stock_image",
+            "label": "STOCK IMAGE",
+            "score": None,
+        }
+
+    # =========================================================
+    # TWO ORIGINALS CHECK
+    # =========================================================
+
+    def should_prefer_stock(self):
+
+        if len(
+            self.recent_visuals
+        ) < 2:
+
+            return False
+
+        last_two = list(
+            self.recent_visuals
+        )[-2:]
+
+        return (
+            last_two[0] == "original"
+            and
+            last_two[1] == "original"
+        )
+
+    # =========================================================
+    # STOCK IMAGE OPPORTUNITY
+    # =========================================================
+
+    def should_try_stock_image(self):
+
+        if self.visual_count <= 0:
+            return False
+
+        target_images = max(
+            1,
+            int(
+                self.visual_count
+                * self.stock_image_target_ratio
+            )
+        )
+
+        # Only request an image when the current count is
+        # below the approximate 15% target.
+        return (
+            self.stock_image_count
+            < target_images
+        )
+
+    # =========================================================
+    # STRICT SENTENCE VISUAL QUERY
+    # =========================================================
+
+    def build_visual_query(self, text, scene):
+        """Build a concise visual query from the actual sentence."""
         original = str(text).strip()
-        t = re.sub(r"\s+", " ", original.lower())
-        t = t.replace("wi-fi", "wifi").replace("wi fi", "wifi")
-        t = t.replace("mini-fridge", "mini fridge")
-        t = t.replace("air-conditioned", "air conditioned")
+        t = re.sub(r"[^a-z0-9]+", " ", original.lower()).strip()
 
-        # (phrase variants, canonical visual query)
+        # Explicit named/semantic concepts. More specific concepts win.
         rules = [
-            (("family suite",), "family suite"),
-            (("studio suite", "full suite"), "hotel suite"),
-            (("bunk beds", "bunk bed"), "bunk beds"),
-            (("king bed", "queen bed", "twin beds", "twin bed"), "bed"),
-            (("bedroom", "beds", "bed", "mattress", "pillow"), "bed"),
-            (("private balcony", "balcony", "terrace", "patio", "veranda"), "balcony"),
-
-            (("bathroom", "private bathroom", "shower", "bathtub", "walk-in shower", "toilet"), "bathroom"),
-            (("toiletries", "shampoo", "conditioner", "soap", "body wash", "toothbrush", "toothpaste", "towels"), "bathroom toiletries"),
-            (("wifi", "wireless internet", "internet access", "free internet", "high-speed internet"), "wifi"),
-            (("air conditioning", "air conditioner", "air conditioned", "climate control"), "air conditioning"),
-            (("mini fridge", "minibar", "mini bar", "refrigerator", "fridge"), "mini fridge"),
-            (("coffee maker", "coffee machine", "tea maker"), "coffee maker"),
-            (("electric kettle", "kettle"), "electric kettle"),
-            (("television", "tv", "smart tv", "flat-screen tv", "flat screen tv"), "television"),
-
-            (("swimming pool", "infinity pool", "outdoor pool", "indoor pool", "poolside", "pool area", "pool"), "swimming pool"),
-            (("spa", "massage", "wellness", "sauna", "steam room", "treatment"), "spa"),
-            (("gym", "fitness center", "fitness centre", "fitness room", "workout", "exercise"), "gym"),
-            (("game room", "games room", "game area", "games area"), "game room"),
-            (("meeting room", "business center", "business centre", "conference room", "conference", "workspace"), "meeting room"),
-
-            (("restaurant", "restaurants", "dining", "dinner", "lunch", "buffet", "meal", "food", "coffee shop", "cafe"), "restaurant dining"),
-            (("room service", "in-room dining", "in room dining"), "room service"),
-            (("breakfast", "breakfast buffet", "morning meal"), "breakfast"),
-            (("bar", "cocktail", "drinks", "beverages", "lounge"), "bar lounge"),
-
-            (("parking", "car park", "parking lot", "parking garage", "free parking"), "parking lot cars"),
-            (("ev charging", "electric car charging", "charging station"), "ev charging station"),
-            (("airport shuttle", "airport transfer", "shuttle"), "shuttle"),
-            (("airport",), "airport"),
-            (("check-in", "check in", "front desk", "arrival"), "reception desk"),
-            (("check-out", "check out", "departure"), "hotel checkout"),
-            (("credit card", "debit card", "card payment", "payment card"), "card payment"),
-            (("security deposit", "refundable deposit", "deposit required", "cash deposit"), "security deposit"),
-            (("pet friendly", "pet-friendly", "pet policy", "pet fee", "dogs", "dog", "cats", "cat", "pets", "pet"), "pet friendly dog"),
-
-            (("museum", "museums"), "museum"),
-            (("temple", "temples"), "temple"),
-            (("church", "churches"), "historic church"),
-            (("mosque", "mosques"), "mosque"),
-            (("stadium", "sports stadium"), "stadium"),
-            (("landmark", "landmarks", "monument", "historic site", "historical site"), "city landmark"),
-            (("beach", "beaches", "beachfront", "ocean", "sea", "coast", "shore", "lagoon"), "beach ocean"),
-
-            (("snorkeling", "snorkelling"), "snorkeling"),
-            (("scuba diving", "diving", "scuba dive"), "scuba diving"),
-            (("kayaking", "kayak"), "kayaking"),
-            (("paddleboard", "paddle boarding", "stand up paddle"), "paddle boarding"),
-            (("surfing", "surf"), "surfing"),
-            (("canoeing", "canoe"), "canoeing"),
-            (("sailing", "sailboat"), "sailing"),
-            (("boat tour", "boat trip", "island hopping", "island tour"), "island boat tour"),
-            (("hiking", "hike", "trekking", "trek"), "hiking"),
-            (("cycling", "bicycle", "bike", "biking"), "cycling"),
-            (("golf", "golf course", "golf club"), "golf course"),
-            (("tennis", "tennis court"), "tennis court"),
-            (("water sports", "watersports"), "water sports"),
+            ("wifi", ["wi fi", "wifi", "wireless internet"]),
+            ("air conditioning", ["air conditioning", "air conditioner", "air conditioned"]),
+            ("mini fridge", ["mini fridge", "mini bar", "minibar", "refrigerator"]),
+            ("coffee maker", ["coffee maker", "coffee machine", "kettle", "electric kettle"]),
+            ("hotel bathroom", ["bathroom", "shower", "bathtub", "toiletries", "shampoo", "soap", "towels"]),
+            ("hotel bed", ["king bed", "queen bed", "twin bed", "twin beds", "bunk bed", "bed", "beds"]),
+            ("breakfast", ["breakfast", "buffet"]),
+            ("hotel restaurant dining", ["restaurant", "restaurants", "dining", "dinner", "lunch", "meal", "culinary", "coffee shop", "cafe"]),
+            ("room service", ["room service", "in room dining", "inroom dining"]),
+            ("housekeeping", ["housekeeping", "cleanliness", "cleaning", "spotless"]),
+            ("hotel staff", ["staff", "hospitality", "concierge", "receptionist", "service"]),
+            ("parking", ["parking", "car park", "parking lot"]),
+            ("electric vehicle charging station", ["electric car charging", "ev charging", "charging station"]),
+            ("airport", ["airport"]),
+            ("transportation", ["transportation", "transport", "taxi", "shuttle", "transit center", "station"]),
+            ("museum", ["museum", "archaeological museum"]),
+            ("temple", ["temple", "temples"]),
+            ("stadium", ["stadium"]),
+            ("landmark attractions", ["attraction", "attractions", "landmark", "sightseeing", "cultural center", "art center", "theater", "theatre"]),
+            ("swimming pool", ["swimming pool", "pool", "poolside"]),
+            ("gym", ["gym", "fitness center", "fitness centre", "workout"]),
+            ("spa", ["spa", "wellness", "massage", "treatment"]),
+            ("game room", ["game room", "games room"]),
+            ("meeting room", ["meeting room", "business center", "business centre", "conference"]),
+            ("family vacation", ["family", "families", "kids", "children"]),
+            ("hotel balcony", ["balcony", "terrace", "patio", "veranda"]),
+            ("hotel courtyard", ["courtyard", "palm lined courtyard"]),
+            ("beach", ["beach", "beaches", "beachfront", "ocean", "sea", "coast", "shore"]),
+            ("island", ["island", "islands"]),
+            ("nature", ["nature", "jungle", "forest", "waterfall", "wildlife"]),
+            ("snorkeling", ["snorkeling", "snorkelling"]),
+            ("diving", ["scuba diving", "diving"]),
+            ("kayaking", ["kayaking", "kayak"]),
+            ("surfing", ["surfing", "surf"]),
+            ("hiking", ["hiking", "hike", "trekking"]),
+            ("cycling", ["cycling", "bicycle", "biking"]),
+            ("golf", ["golf", "golf course"]),
+            ("tennis", ["tennis"]),
+            ("water sports", ["water sports", "watersports"]),
+            ("check in reception", ["check in", "checkin", "arrival", "front desk"]),
+            ("check out departure", ["check out", "checkout", "departure"]),
+            ("hotel price", ["price", "cost", "per night", "budget", "affordable", "fees", "taxes"]),
+            ("hotel reviews", ["review", "reviews", "rating", "ratings", "score", "guest"]),
         ]
 
-        hits = []
-        for rule_id, (terms, query) in enumerate(rules):
-            positions = []
-            for term in terms:
-                m = re.search(
-                    r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])",
-                    t,
-                )
-                if m:
-                    positions.append(m.start())
-            if positions:
-                hits.append((min(positions), rule_id, query))
+        negative_parking = any(
+            phrase in t for phrase in [
+                "no parking", "no parking space", "no parking spaces",
+                "parking unavailable", "does not offer parking",
+                "doesnt offer parking", "without parking"
+            ]
+        )
 
-        # Named landmarks get merged in by sentence position too — even
-        # when a keyword rule already matched (e.g. "beach") — so a
-        # sentence naming several places doesn't collapse to a single
-        # generic concept or drop every landmark but the longest one.
-        landmark_rule_id = len(rules)
-        for position, query in self._find_landmark_candidates(original):
-            hits.append((position, landmark_rule_id, query))
+        found = []
+        for label, words in rules:
+            if any(word in t for word in words):
+                if label == "parking" and negative_parking:
+                    continue
+                if label not in found:
+                    found.append(label)
 
-        concepts = []
-        for _, _, query in sorted(hits, key=lambda x: (x[0], x[1])):
-            if query not in concepts:
-                concepts.append(query)
+        # Negative parking still needs a relevant visual, but not a
+        # positive "hotel parking" search.
+        if negative_parking:
+            return "empty street parking roadside access"
 
-        if concepts:
-            return " || ".join(concepts[:5])
+        if found:
+            # Keep the query compact. Multiple concepts are intentionally
+            # combined when they occur in the same sentence.
+            return " ".join(found[:3])
 
-        # Explicitly visual historical/design cues.
-        if re.search(r"\b(1940s|1950s|1960s|mid[- ]century|retro|historic|history|architecture|arches|tile work|courtyard|decor)\b", t):
-            return "historic hotel exterior"
+        # Preserve useful nouns from the sentence for places/brands.
+        # This is deliberately conservative; filler words are excluded.
+        stop = {
+            "the", "a", "an", "and", "or", "but", "so", "to", "of", "in",
+            "on", "at", "for", "with", "from", "by", "as", "is", "are",
+            "was", "were", "be", "been", "being", "this", "that", "these",
+            "those", "it", "its", "they", "their", "them", "there", "here",
+            "just", "also", "very", "quite", "really", "now", "then",
+            "some", "many", "most", "more", "less", "only", "about",
+            "around", "roughly", "nearly", "even", "still", "back",
+            "well", "like", "one", "two", "three", "four", "five",
+            "minute", "minutes", "night", "per", "day", "today", "tomorrow",
+            "will", "would", "could", "should", "can", "may", "might",
+            "you", "your", "we", "our", "they", "their", "guest", "guests",
+        }
 
-        # Explicit traveler/person visual cues.
-        if re.search(r"\b(guests|guest|travelers|traveler|families|family|couples|children|kids)\b", t):
-            return "hotel guests travel"
+        words = re.findall(r"[a-z0-9]+", t)
+        useful = []
+        for word in words:
+            if len(word) < 3 or word in stop:
+                continue
+            if word.isdigit():
+                continue
+            if word not in useful:
+                useful.append(word)
 
-        # Abstract sentences: choose a neutral property visual, never arbitrary prose.
-        scene_l = str(scene).lower()
-        for key, query in (
-            ("pool", "swimming pool"),
-            ("spa", "spa"),
-            ("gym", "gym"),
-            ("bathroom", "bathroom"),
-            ("restaurant", "restaurant dining"),
-            ("suite", "hotel suite"),
-            ("bed", "bed"),
-            ("lobby", "hotel lobby"),
+        # Don't turn generic prose into a bad Pexels query.
+        if useful:
+            return " ".join(useful[:5])
+
+        scene_text = str(scene).lower()
+        defaults = [
+            ("room", "hotel room interior"),
+            ("amenit", "hotel amenities"),
+            ("dining", "hotel restaurant dining"),
+            ("location", "hotel location city center"),
+            ("review", "hotel review"),
+            ("policy", "hotel reception"),
+            ("intro", "hotel exterior"),
             ("outside", "hotel exterior"),
-        ):
-            if key in scene_l:
-                return query
+        ]
 
-        return "hotel exterior"
+        for key, value in defaults:
+            if key in scene_text:
+                return value
+
+        # Safe hotel-specific fallback instead of "travel destination".
+        return "hotel interior"
+
+
+    def _visual_result_is_new(self, result):
+        if not result:
+            return False
+        media = result.get("media")
+        if not media:
+            return False
+        key = str(Path(media).resolve())
+        if key in self.used_visuals:
+            return False
+        self.used_visuals.add(key)
+        return True
+
+    def clean_visual_query(self, query):
+        """Final guard: turn any stale/generic query into a clean Pexels query."""
+        q = re.sub(r"\s+", " ", str(query).strip())
+
+        # Pexels search should receive normal words, not debug separators.
+        q = q.replace("|", " ")
+
+        # Collapse duplicate location phrases, e.g. "san diego ... san diego".
+        words = q.split()
+        cleaned = []
+        for word in words:
+            if not cleaned or word.lower() != cleaned[-1].lower():
+                cleaned.append(word)
+        q = " ".join(cleaned)
+
+        replacements = {
+            "hotel wifi": "wifi",
+            "hotel bathroom": "bathroom",
+            "luxury hotel bathroom shower": "bathroom",
+            "hotel room coffee maker": "coffee maker",
+            "hotel room mini fridge": "mini fridge",
+            "luxury hotel swimming pool": "swimming pool",
+            "hotel gym fitness center": "gym",
+            "hotel tennis court": "tennis court",
+            "hotel booking": "hotel booking",
+            "hotel check in": "reception desk",
+            "hotel check out": "hotel checkout",
+            "hotel interior": "room interior",
+        }
+
+        low = q.lower()
+        if low in replacements:
+            q = replacements[low]
+
+        return q.strip()
+
+    # =========================================================
+    # VISUAL SELECTION
+    # =========================================================
+
+    def select_visual(
+        self,
+        text,
+        is_first=False,
+        context_before="",
+        context_after="",
+        is_new_sentence=True,
+    ):
+
+        scene_data = self.scene.analyze(text)
+        scene = scene_data["scene"]
+
+        visual_queries = self.current_visual_queries or [
+            q.strip()
+            for q in self.query_generator.generate(
+                text=text,
+                scene=scene,
+            ).split("||")
+            if q.strip()
+        ]
+
+        if not visual_queries:
+            visual_queries = ["hotel exterior"]
+
+        # is_new_sentence marks the FIRST select_visual call for this
+        # sentence, regardless of whether it's the video's overall first
+        # visual (is_first). Without this distinction, every sentence's
+        # first call would immediately increment past concept[0] and,
+        # for a 2-concept sentence, land on and stay on the last concept
+        # for every visual piece of that sentence.
+        if is_new_sentence:
+            self.current_visual_query_index = 0
+        else:
+            self.current_visual_query_index = min(
+                self.current_visual_query_index + 1,
+                len(visual_queries) - 1,
+            )
+
+        prompt = self.clean_visual_query(
+            visual_queries[self.current_visual_query_index]
+        )
+
+        print(f"[SEARCH QUERY] {prompt}")
+        self.visual_count += 1
+
+        # First visual: explicit intro/first segment must use original hotel image.
+        if is_first:
+            result = self.find_first_original(
+                text=text,
+                scene=scene,
+            )
+            if result:
+                return result
+
+        # Prefer original hotel imagery, but never let originals dominate
+        # with 3+ consecutive original clips.
+        recent = list(self.recent_visuals)
+        allow_original = not (
+            len(recent) >= 2
+            and recent[-1] == "original"
+            and recent[-2] == "original"
+        )
+
+        if allow_original:
+            result = self.find_original(
+                text=text,
+                scene=scene,
+            )
+            if result:
+                return result
+
+        # If no original exists, relevant stock image can fill the 15% mix.
+        if self.should_try_stock_image():
+            print("[MIX] Trying relevant stock image...")
+            result = self.find_stock_image(query=prompt)
+            if result:
+                return result
+
+        # Then use a relevant stock video.
+        result = self.find_stock_video(
+            query=prompt
+        )
+        if result:
+            self.stock_video_count += 1
+            return result
+
+        # Final image attempt.
+        result = self.find_stock_image(
+            query=prompt
+        )
+        if result:
+            return result
+
+        # Never leave a segment with no media: the renderer would otherwise
+        # visually hold the previous clip. A longer, more varied list
+        # avoids exhausting Pexels results for a small set of repeated
+        # generic queries on long scripts.
+        fallbacks = [
+            "hotel interior",
+            "hotel lobby",
+            "hotel exterior",
+            "hotel bedroom",
+            "hotel room interior",
+            "boutique hotel design",
+            "hotel courtyard",
+            "hotel pool area",
+            "travel destination",
+            "hotel hallway",
+            "city hotel building",
+            "hotel amenities",
+        ]
+
+        for fallback in fallbacks:
+            result = self.find_stock_video(
+                query=fallback
+            )
+            if result:
+                self.stock_video_count += 1
+                print(f"[FALLBACK VISUAL] {fallback}")
+                return result
+
+        for fallback in fallbacks:
+            result = self.find_stock_image(
+                query=fallback
+            )
+            if result:
+                print(f"[FALLBACK IMAGE] {fallback}")
+                return result
+
+        # Absolute final fallback: reuse an already selected visual instead of
+        # crashing and leaving an uncovered audio segment. This should only
+        # happen when Pexels has no result and the original matcher has no
+        # acceptable unused image.
+        if self.used_visuals:
+            reusable_path = next(iter(self.used_visuals))
+            reusable = Path(reusable_path)
+
+            if reusable.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
+                media_type = "image"
+                source_type = "reused_image"
+            else:
+                media_type = "video"
+                source_type = "reused_video"
+
+            print(
+                f"[FALLBACK REUSE] {reusable.name}"
+            )
+
+            return {
+                "media": reusable,
+                "media_type": media_type,
+                "source_type": source_type,
+                "label": None,
+                "score": None,
+            }
+
+        print("[WARNING] No visual source available for sentence.")
+        return None
+
+    # =========================================================
+    # BUILD TIMELINE
+    # =========================================================
+
+    def build(self):
+
+        print(
+            "\n========================================"
+        )
+
+        print(
+            "Generating hotel review timeline"
+        )
+
+        print(
+            "========================================"
+        )
+
+        # -----------------------------------------------------
+        # TRANSCRIPT
+        # -----------------------------------------------------
+
+        segments = (
+            self.transcript.transcribe(
+                self.audio_file
+            )
+        )
+
+        if not segments:
+
+            raise RuntimeError(
+                "No transcript segments found."
+            )
+
+        # -----------------------------------------------------
+        # ORIGINAL IMAGES
+        # -----------------------------------------------------
+
+        print(
+            "\n[INFO] Indexing original hotel images..."
+        )
+
+        self.matcher.index_images(
+            self.images_dir
+        )
+
+        # -----------------------------------------------------
+        # AUDIO DURATION
+        # -----------------------------------------------------
+
+        with AudioFileClip(
+            str(self.audio_file)
+        ) as audio:
+
+            audio_duration = float(
+                audio.duration
+            )
+
+        timeline = []
+
+        # -----------------------------------------------------
+        # VISUAL TIMELINE
+        # -----------------------------------------------------
+
+        # Keep transcript/audio order unchanged. Only the explicit intro
+        # segment receives first-visual priority.
+        intro_index = None
+
+        for idx, segment in enumerate(segments):
+            segment_text = str(
+                segment.get("text", "")
+            ).strip().lower()
+
+            if (
+                segment_text == "intro"
+                or segment_text.startswith("intro:")
+                or segment_text.startswith("[intro]")
+            ):
+                intro_index = idx
+                break
+
+        for position, (i, segment) in enumerate(
+            enumerate(segments)
+        ):
+
+            if i == 0:
+
+                start = 0.0
+
+            else:
+
+                start = float(
+                    segments[i - 1]["end"]
+                )
+
+            if i < len(
+                segments
+            ) - 1:
+
+                end = float(
+                    segments[i]["end"]
+                )
+
+            else:
+
+                end = audio_duration
+
+            if end <= start:
+                continue
+
+            duration = (
+                end - start
+            )
+
+            text = segment[
+                "text"
+            ].strip()
+
+            if not text:
+                continue
+
+            context_before = (
+                str(segments[i - 1].get("text", "")).strip()
+                if i > 0 else ""
+            )
+            context_after = (
+                str(segments[i + 1].get("text", "")).strip()
+                if i < len(segments) - 1 else ""
+            )
+
+            self.current_visual_queries = [
+                self.clean_visual_query(q)
+                for q in self.query_generator.generate(
+                    text=text,
+                    scene=self.scene.analyze(text)["scene"],
+                ).split("||")
+                if q.strip()
+            ]
+            if not self.current_visual_queries:
+                self.current_visual_queries = ["hotel interior"]
+            self.current_visual_query_index = 0
+
+            print(
+                f"\n[{i:03d}] "
+                f"{start:.2f} -> "
+                f"{end:.2f}"
+            )
+
+            print(
+                f"TEXT: {text}"
+            )
+
+            context_before = (
+                str(segments[i - 1].get("text", "")).strip()
+                if i > 0 else ""
+            )
+            context_after = (
+                str(segments[i + 1].get("text", "")).strip()
+                if i < len(segments) - 1 else ""
+            )
+
+            first_visual = self.select_visual(
+                text,
+                is_first=(i == 0 if intro_index is None else i == intro_index),
+                context_before=context_before,
+                context_after=context_after,
+                is_new_sentence=True,
+            )
+
+            if first_visual is None:
+                continue
+
+            # Never leave one visual sitting on screen for a long sentence.
+            # A sentence remains intact; only its visual track is subdivided.
+            max_visual_duration = 4.0
+            visual_count_needed = max(
+                1,
+                min(5, int((duration + max_visual_duration - 0.001) // max_visual_duration))
+            )
+
+            visuals = [first_visual]
+
+            # Fetch additional distinct visuals for longer sentences.
+            while len(visuals) < visual_count_needed:
+                extra = self.select_visual(
+                    text,
+                    is_first=False,
+                    context_before=context_before,
+                    context_after=context_after,
+                    is_new_sentence=False,
+                )
+                if extra is None:
+                    break
+
+                # Avoid accidentally adding the exact same media path.
+                if str(extra.get("media")) in {
+                    str(v.get("media")) for v in visuals
+                }:
+                    break
+
+                visuals.append(extra)
+
+            piece_duration = duration / len(visuals)
+
+            for piece_index, visual in enumerate(visuals):
+                piece_start = start + piece_index * piece_duration
+                piece_end = (
+                    end
+                    if piece_index == len(visuals) - 1
+                    else piece_start + piece_duration
+                )
+
+                timeline.append({
+                    "start": piece_start,
+                    "end": piece_end,
+                    "duration": piece_end - piece_start,
+                    "text": text,
+                    "media": visual["media"],
+                    "media_type": visual["media_type"],
+                    "source_type": visual["source_type"],
+                    "label": visual["label"],
+                    "score": visual["score"],
+                    "sentence_index": i,
+                    "visual_piece": piece_index + 1,
+                    "visual_pieces_total": len(visuals),
+                })
+
+                print(
+                    f"SOURCE: {visual['source_type']}"
+                )
+
+                print(
+                    f"MEDIA: {Path(visual['media']).name}"
+                )
+
+        # -----------------------------------------------------
+        # DEBUG
+        # -----------------------------------------------------
+
+        print(
+            "\n========================================"
+        )
+
+        print(
+            f"Segments : {len(segments)}"
+        )
+
+        print(
+            f"Timeline : {len(timeline)}"
+        )
+
+        print(
+            f"Audio    : "
+            f"{audio_duration:.3f} sec"
+        )
+
+        print(
+            f"Stock Images Used : "
+            f"{self.stock_image_count}"
+        )
+
+        print(
+            f"Stock Videos Used : "
+            f"{self.stock_video_count}"
+        )
+
+        print(
+            "========================================"
+        )
+
+        total = 0.0
+
+        for i, item in enumerate(
+            timeline
+        ):
+
+            total += float(
+                item["duration"]
+            )
+
+            print(
+                f"{i:03d} | "
+                f"{item['start']:.3f} -> "
+                f"{item['end']:.3f} | "
+                f"{item['duration']:.3f} | "
+                f"{item['source_type']} | "
+                f"{Path(item['media']).name}"
+            )
+
+        print(
+            "----------------------------------------"
+        )
+
+        print(
+            f"Timeline Total : "
+            f"{total:.3f} sec"
+        )
+
+        print(
+            f"Audio Duration : "
+            f"{audio_duration:.3f} sec"
+        )
+
+        print(
+            "========================================"
+        )
+
+        return timeline
