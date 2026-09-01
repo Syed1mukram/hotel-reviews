@@ -1,0 +1,11 @@
+hotel_review.osp
+hotel_review_openshot_project*
+hotel_review_media_package*
+openshot*
+*.zip
+hotel_review_assets/
+cache/stock/
+cache/stock_images/
+output/
+__pycache__/
+*.pyc

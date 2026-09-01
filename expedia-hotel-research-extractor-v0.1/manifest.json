@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Expedia Hotel Research Extractor",
+  "version": "0.1.0",
+  "description": "Extracts visible hotel, rating, price, room, amenity and policy information from Expedia accommodation pages.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://www.expedia.com/*", "https://*.expedia.com/*"],
+  "action": {
+    "default_title": "Scan Expedia Hotel",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.expedia.com/*", "https://*.expedia.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

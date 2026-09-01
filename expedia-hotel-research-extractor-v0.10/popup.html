@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Expedia Hotel Research</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="hotelTitle">Hotel Research</h1>
+    <div id="subTitle">Expedia</div>
+  </div>
+  <button id="scan">SCAN</button>
+</header>
+
+<div id="status">Open an Expedia hotel page and scan.</div>
+
+<nav id="tabs">
+  <button data-tab="overview" class="active">Overview</button>
+  <button data-tab="rooms">Rooms</button>
+  <button data-tab="reviews">Reviews</button>
+  <button data-tab="facilities">Facilities</button>
+  <button data-tab="location">Location</button>
+  <button data-tab="policies">Policies</button>
+  <button data-tab="images">Images</button>
+</nav>
+
+<main id="content"></main>
+
+<footer>
+  <button id="copyAll">COPY ALL DATA</button>
+  <button id="downloadJson">JSON</button>
+  <button id="downloadCsv">CSV</button>
+</footer>
+
+<script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+import getpass
+from pathlib import Path
+
+key = getpass.getpass("Pexels API key: ").strip()
+
+Path(".env").write_text(
+    f"PEXELS_API_KEY={key}\n",
+    encoding="utf-8"
+)
+
+print(".env saved")
+
+
+%%bash
+pip install -q faster-whisper ctranslate2 open-clip-torch python-dotenv
+
+
+!python -u main.py
+

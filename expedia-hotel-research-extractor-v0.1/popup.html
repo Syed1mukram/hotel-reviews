@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Expedia Hotel Extractor</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>Hotel Extractor</h1>
+      <p>Expedia research tool</p>
+    </div>
+  </div>
+
+  <button id="scan">SCAN HOTEL</button>
+
+  <div id="status" class="status">Open an Expedia hotel page and scan.</div>
+
+  <div id="actions" class="actions hidden">
+    <button id="copyJson">COPY JSON</button>
+    <button id="downloadJson">DOWNLOAD JSON</button>
+  </div>
+
+  <pre id="result"></pre>
+
+<script src="popup.js"></script>
+</body>
+</html>
