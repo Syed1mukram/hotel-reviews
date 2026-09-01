@@ -547,9 +547,7 @@ class TimelineBuilder:
         scene = scene_data["scene"]
 
         visual_queries = self.current_visual_queries or [
-            self.clean_visual_query(
-                q
-            )
+            q.strip()
             for q in self.query_generator.generate(
                 text=text,
                 scene=scene,
@@ -560,7 +558,11 @@ class TimelineBuilder:
         if not visual_queries:
             visual_queries = ["hotel interior"]
 
-        if not is_first and len(visual_queries) > 1:
+        # First visual uses concept 0. Each later visual moves to the next
+        # concept, so "pool + spa + gym" becomes pool -> spa -> gym.
+        if is_first:
+            self.current_visual_query_index = 0
+        elif len(visual_queries) > 1:
             self.current_visual_query_index = min(
                 self.current_visual_query_index + 1,
                 len(visual_queries) - 1,

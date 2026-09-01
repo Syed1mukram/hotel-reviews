@@ -1286,47 +1286,50 @@ class SearchQueryGenerator:
         return f"{best} travel landmark"
 
     def generate(self, text, scene="general"):
-        """Return only useful, concrete visual queries, in spoken order."""
+        """Extract only explicit, visually representable concepts."""
         original = str(text).strip()
         t = re.sub(r"\s+", " ", original.lower())
         t = t.replace("wi-fi", "wifi").replace("wi fi", "wifi")
         t = t.replace("mini-fridge", "mini fridge")
-        t = t.replace("air-conditioned", "air conditioned")
-        t = t.replace("smag", "smeg")
 
         rules = [
-            (("swimming pool", "infinity pool", "outdoor pool", "indoor pool", "poolside", "pool area", "pool"), "swimming pool"),
-            (("spa", "massage", "wellness", "sauna", "steam room", "treatment"), "spa"),
-            (("gym", "fitness center", "fitness centre", "fitness room", "workout", "exercise"), "gym"),
-            (("game room", "games room"), "game room"),
-            (("meeting room", "business center", "business centre", "conference room", "conference", "workspace"), "meeting room"),
             (("family suite",), "family suite"),
-            (("studio suite",), "hotel suite"),
+            (("studio suite", "full suite"), "hotel suite"),
             (("bunk beds", "bunk bed"), "bunk beds"),
-            (("king bed", "queen bed", "twin beds", "twin bed", "bedroom", "bed", "beds", "mattress", "pillow"), "bed"),
-            (("balcony", "terrace", "private terrace", "patio", "veranda"), "balcony"),
+            (("king bed", "queen bed", "twin beds", "twin bed"), "bed"),
+            (("bedroom", "bed", "beds", "mattress", "pillow"), "bed"),
+            (("private balcony", "balcony", "terrace", "patio", "veranda"), "balcony"),
+
             (("bathroom", "shower", "bathtub", "walk-in shower", "toilet"), "bathroom"),
             (("toiletries", "shampoo", "conditioner", "soap", "body wash", "toothbrush", "toothpaste", "towels"), "bathroom toiletries"),
             (("wifi", "wireless internet", "internet access", "free internet", "high-speed internet"), "wifi"),
             (("air conditioning", "air conditioner", "air conditioned", "climate control"), "air conditioning"),
             (("mini fridge", "minibar", "mini bar", "refrigerator", "fridge"), "mini fridge"),
             (("coffee maker", "coffee machine", "tea maker"), "coffee maker"),
-            (("electric kettle", "smeg"), "electric kettle"),
+            (("electric kettle", "kettle"), "electric kettle"),
             (("television", "tv", "smart tv", "flat-screen tv", "flat screen tv"), "television"),
-            (("ocean view", "sea view", "water view", "mountain view", "garden view", "city view", "scenic view", "panoramic view"), "scenic view"),
+
+            (("swimming pool", "infinity pool", "outdoor pool", "indoor pool", "poolside", "pool area", "pool"), "swimming pool"),
+            (("spa", "massage", "wellness", "sauna", "steam room", "treatment"), "spa"),
+            (("gym", "fitness center", "fitness centre", "fitness room", "workout", "exercise"), "gym"),
+            (("game room", "games room"), "game room"),
+            (("meeting room", "business center", "business centre", "conference room", "conference", "workspace"), "meeting room"),
+
             (("restaurant", "restaurants", "dining", "dinner", "lunch", "buffet", "meal", "food", "coffee shop", "cafe"), "restaurant dining"),
             (("room service", "in-room dining", "in room dining"), "room service"),
             (("breakfast", "breakfast buffet", "morning meal"), "breakfast"),
             (("bar", "cocktail", "drinks", "beverages", "lounge"), "bar lounge"),
+
             (("parking", "car park", "parking lot", "parking garage", "free parking"), "parking lot cars"),
-            (("electric car charging", "ev charging", "charging station"), "ev charging station"),
-            (("shuttle", "airport transfer", "airport shuttle", "airport transportation"), "shuttle"),
+            (("ev charging", "electric car charging", "charging station"), "ev charging station"),
+            (("airport shuttle", "airport transfer", "shuttle"), "shuttle"),
             (("airport",), "airport"),
             (("check-in", "check in", "front desk", "arrival"), "reception desk"),
             (("check-out", "check out", "departure"), "hotel checkout"),
             (("credit card", "debit card", "card payment", "payment card"), "card payment"),
             (("security deposit", "refundable deposit", "deposit required", "cash deposit"), "security deposit"),
             (("pet friendly", "pet-friendly", "pet policy", "pet fee", "dogs", "dog", "cats", "cat", "pets", "pet"), "pet friendly dog"),
+
             (("museum", "museums"), "museum"),
             (("temple", "temples"), "temple"),
             (("church", "churches"), "historic church"),
@@ -1350,45 +1353,42 @@ class SearchQueryGenerator:
         ]
 
         hits = []
-        for order, (terms, query) in enumerate(rules):
-            pos = []
+        for rule_no, (terms, query) in enumerate(rules):
+            positions = []
             for term in terms:
-                pos.extend(
-                    m.start()
-                    for m in re.finditer(
-                        r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])",
-                        t,
-                    )
+                m = re.search(
+                    r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9])",
+                    t,
                 )
-            if pos:
-                hits.append((min(pos), order, query))
+                if m:
+                    positions.append(m.start())
+            if positions:
+                hits.append((min(positions), rule_no, query))
 
         found = []
         for _, _, query in sorted(hits):
             if query not in found:
                 found.append(query)
 
-        # Location-specific visual only when an explicit place is genuinely present.
         if found:
             return " || ".join(found[:4])
 
-        place_candidates = [
-            m.group(0).strip()
-            for m in re.finditer(
-                r"\b[A-Z][A-Za-z']+(?:\s+[A-Z][A-Za-z']+){1,5}\b",
-                original,
-            )
-        ]
-        bad_place_bits = (
-            "there", "this", "today", "before", "first", "one guest",
-            "the hotel", "the property", "a bit", "in fact",
+        # Only a genuine named place can be a fallback query.
+        candidates = re.findall(
+            r"\b[A-Z][A-Za-z']+(?:\s+[A-Z][A-Za-z']+){1,5}\b",
+            original,
         )
-        for candidate in sorted(place_candidates, key=len, reverse=True):
-            low = candidate.lower()
-            if not any(bit in low for bit in bad_place_bits):
-                return f"{candidate} landmark"
+        reject = (
+            "There", "This", "Today", "Before", "First", "One Guest",
+            "The Hotel", "The Property", "A Bit", "In Fact",
+            "What Guests", "Another", "Multiple Travelers",
+        )
+        for candidate in sorted(candidates, key=len, reverse=True):
+            if candidate.startswith(reject):
+                continue
+            return f"{candidate} landmark"
 
-        # Safe scene fallbacks only. Never send arbitrary sentence fragments to Pexels.
+        # Safe scene fallback only.
         scene_l = str(scene).lower()
         for key, query in (
             ("pool", "swimming pool"),
