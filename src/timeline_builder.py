@@ -496,22 +496,6 @@ class TimelineBuilder:
             scene=scene,
         )
 
-        # Short/filler segments ("So where does all of this",
-        # "smaller footprint, still with the same clean,") often carry
-        # no concrete keyword or place name on their own and fall through
-        # to the generic "travel destination" catch-all. Retry with the
-        # neighboring sentence(s) merged in for extra context before
-        # accepting the generic result.
-        if prompt.startswith("travel destination") and (
-            context_before or context_after
-        ):
-            merged_text = f"{context_before} {text} {context_after}".strip()
-            merged_prompt = self.query_generator.generate(
-                text=merged_text,
-                scene=scene,
-            )
-            if not merged_prompt.startswith("travel destination"):
-                prompt = merged_prompt
 
         print(f"[SEARCH QUERY] {prompt}")
         self.visual_count += 1
@@ -577,7 +561,6 @@ class TimelineBuilder:
             "boutique hotel design",
             "hotel courtyard",
             "hotel pool area",
-            "travel destination",
             "hotel hallway",
             "city hotel building",
             "hotel amenities",

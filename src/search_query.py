@@ -122,7 +122,7 @@ class SearchQueryGenerator:
                     "crib",
                     "cot",
                 ],
-                "hotel bedroom bed",
+                "bed",
             ),
 
             # AC
@@ -148,7 +148,7 @@ class SearchQueryGenerator:
                     "free internet",
                     "high-speed internet",
                 ],
-                "hotel wifi",
+                "wifi",
             ),
 
             # TV
@@ -160,7 +160,7 @@ class SearchQueryGenerator:
                     "flat-screen tv",
                     "flat screen tv",
                 ],
-                "hotel room television",
+                "television",
             ),
 
             # PARKING
@@ -180,7 +180,7 @@ class SearchQueryGenerator:
             (
                 [
                     "shuttle",
-                    "hotel shuttle",
+                    "shuttle",
                     "airport transfer",
                     "airport shuttle",
                     "airport transportation",
@@ -262,7 +262,7 @@ class SearchQueryGenerator:
                     "food",
                     "cafe",
                 ],
-                "hotel restaurant dining",
+                "restaurant dining",
             ),
 
             # BAR / LOUNGE
@@ -1101,7 +1101,7 @@ class SearchQueryGenerator:
                 "no breakfast",
                 "breakfast is not included",
                 "breakfast isn't included",
-            ], "hotel breakfast"),
+            ], "breakfast"),
         ]
 
         for keywords, query in rules:
@@ -1133,7 +1133,7 @@ class SearchQueryGenerator:
                                 r"\bentrance\b", r"\bexterior\b"]),
             ("hotel room", [r"\broom\b", r"\brooms\b", r"\bbedroom\b",
                             r"\bsuite\b", r"\baccommodation\b"]),
-            ("hotel bathroom", [r"\bbathroom\b", r"\bshower\b", r"\bbathtub\b",
+            ("bathroom", [r"\bbathroom\b", r"\bshower\b", r"\bbathtub\b",
                                  r"\btoilet\b"]),
             ("balcony", [r"\bbalcony\b", r"\bterrace\b", r"\bpatio\b",
                          r"\bveranda\b"]),
@@ -1312,8 +1312,28 @@ class SearchQueryGenerator:
 
         def add_location(query):
             q = query.strip()
-            if location and location not in q:
+
+            # Location is useful for named landmarks/destinations, but hurts
+            # generic Pexels concepts such as "wifi", "bathroom", and "gym".
+            location_allowed = any(
+                key in q.lower()
+                for key in (
+                    "landmark",
+                    "museum",
+                    "temple",
+                    "stadium",
+                    "beach",
+                    "island",
+                    "travel",
+                    "city",
+                    "park",
+                    "attraction",
+                )
+            )
+
+            if location and location_allowed and location not in q:
                 return f"{q} {location}"
+
             return q
 
         def has(*terms):
@@ -1340,78 +1360,78 @@ class SearchQueryGenerator:
             # ROOM / BED
             (("family suite",), "family suite"),
             (("suite","suites"), "hotel suite"),
-            (("bunk beds","bunk bed"), "hotel bunk beds"),
+            (("bunk beds","bunk bed"), "bunk beds"),
             (("king bed","queen bed","twin beds","twin bed","extra bed",
               "bedroom","bed","beds","mattress","pillow","crib","cot"),
-             "hotel bedroom bed"),
+             "bed"),
 
             # BATHROOM / AMENITIES
             (("bathroom","shower","bathtub","walk-in shower","toilet"),
-             "hotel bathroom"),
+             "bathroom"),
             (("toiletries","toiletry","shampoo","conditioner","soap",
               "body wash","toothbrush","toothpaste","towels","bathrobe",
               "slippers"),
-             "hotel bathroom toiletries"),
+             "bathroom toiletries"),
             (("wifi","wireless internet","internet access","free internet",
               "high-speed internet"),
-             "hotel wifi"),
+             "wifi"),
             (("air conditioning","air conditioner","air conditioned",
               "climate control"),
-             "hotel air conditioning"),
+             "air conditioning"),
             (("mini fridge","minibar","mini bar","refrigerator","fridge"),
-             "hotel mini fridge"),
+             "mini fridge"),
             (("coffee maker","coffee machine","tea maker"),
-             "hotel coffee maker"),
+             "coffee maker"),
             (("kettle","electric kettle","smeg"),
-             "hotel electric kettle"),
+             "electric kettle"),
             (("television","tv","smart tv","flat-screen tv",
               "flat screen tv"),
-             "hotel room television"),
+             "television"),
             (("balcony","terrace","private terrace","patio","veranda"),
-             "hotel balcony terrace"),
+             "balcony terrace"),
             (("ocean view","sea view","water view","mountain view",
               "garden view","city view","scenic view","panoramic view"),
-             "hotel scenic view"),
+             "scenic view"),
 
             # FACILITIES
             (("swimming pool","infinity pool","outdoor pool","indoor pool",
               "poolside","pool area","pool"),
-             "hotel swimming pool"),
+             "swimming pool"),
             (("hot tub","jacuzzi","whirlpool"),
-             "hotel jacuzzi"),
+             "jacuzzi"),
             (("spa","massage","wellness","sauna","steam room","steam bath",
               "treatment"),
-             "hotel spa"),
+             "spa"),
             (("gym","fitness center","fitness centre","fitness room",
               "workout","exercise"),
-             "hotel gym"),
+             "gym"),
             (("game room","games room"),
-             "hotel game room"),
+             "game room"),
             (("meeting room","business center","business centre",
               "conference room","conference","workspace","work space"),
-             "hotel meeting room"),
+             "meeting room"),
 
             # DINING
             (("breakfast","breakfast buffet","morning meal"),
-             "hotel breakfast"),
+             "breakfast"),
             (("restaurant","restaurants","dining","dinner","lunch","buffet",
               "meal","food","coffee shop","cafe"),
-             "hotel restaurant"),
+             "restaurant dining"),
             (("room service","in-room dining","in room dining"),
-             "hotel room service"),
+             "room service"),
             (("bar","cocktail","drinks","beverages","lounge"),
              "hotel bar lounge"),
 
             # TRANSPORT / LOCATION
             (("parking","car park","parking lot","parking garage","free parking"),
-             "hotel parking"),
+             "parking"),
             (("electric car charging","ev charging","charging station"),
              "ev charging station"),
-            (("shuttle","hotel shuttle","airport transfer","airport shuttle",
+            (("shuttle","shuttle","airport transfer","airport shuttle",
               "airport transportation","transfer service"),
-             "hotel shuttle"),
-            (("airport","airport travel"),
-             "airport travel"),
+             "shuttle"),
+            (("airport","airport"),
+             "airport"),
 
             # PLACES / ACTIVITIES
             (("museum","museums"), "museum"),
@@ -1456,10 +1476,10 @@ class SearchQueryGenerator:
             # REVIEW / VALUE
             (("rating","ratings","rated","review","reviews","score","scores",
               "guest rating"),
-             "hotel review rating"),
+             "rating review"),
             (("price","prices","cost","value","budget","expensive","affordable",
               "cheap","rate","rates","per night","taxes","fees"),
-             "hotel price"),
+             "price"),
         ]
 
         concepts = []
@@ -1501,16 +1521,16 @@ class SearchQueryGenerator:
         # Scene fallback is the ONLY fallback. Never raw prose.
         scene_l = str(scene).lower()
         defaults = [
-            ("bathroom", "hotel bathroom"),
-            ("pool", "hotel swimming pool"),
-            ("spa", "hotel spa"),
-            ("gym", "hotel gym"),
-            ("restaurant", "hotel restaurant"),
-            ("room", "hotel room interior"),
+            ("bathroom", "bathroom"),
+            ("pool", "swimming pool"),
+            ("spa", "spa"),
+            ("gym", "gym"),
+            ("restaurant", "restaurant dining"),
+            ("room", "room interior"),
             ("lobby", "hotel lobby"),
             ("outside", "hotel exterior"),
             ("location", "hotel location"),
-            ("review", "hotel review"),
+            ("review", "review rating"),
         ]
         for key, query in defaults:
             if key in scene_l:

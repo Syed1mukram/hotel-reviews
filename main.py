@@ -1,12 +1,11 @@
-from config import VOICE_FILE, ORIGINAL_IMAGES_DIR
+from config import VOICE_FILE, OUTPUT_VIDEO, ORIGINAL_IMAGES_DIR
 from src.timeline_builder import TimelineBuilder
-from editor_project import save_editor_project
-from openshot_project_builder import build_openshot_project
+from src.renderer import Renderer
 
 
 def main():
     print("========================================")
-    print("HOTEL REVIEW - LIGHTWEIGHT OPENSHOT")
+    print("HOTEL REVIEW PIPELINE")
     print("========================================")
 
     builder = TimelineBuilder(
@@ -15,20 +14,19 @@ def main():
     )
 
     timeline = builder.build()
-    print(f"Timeline items: {len(timeline)}")
 
-    save_editor_project(
+    renderer = Renderer()
+
+    renderer.render(
         timeline=timeline,
         audio_file=VOICE_FILE,
-        output="editor_project.json",
+        output=OUTPUT_VIDEO,
     )
 
-    build_openshot_project(
-        editor_project="editor_project.json",
-        template="openshot_template_clean.osp",
-        output_dir="openshot_export",
-        project_name="hotel_review",
-    )
+    print("========================================")
+    print("DONE")
+    print("========================================")
+    print(f"Final video: {OUTPUT_VIDEO}")
 
 
 if __name__ == "__main__":
