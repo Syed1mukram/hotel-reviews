@@ -3,7 +3,7 @@ from pathlib import Path
 
 import requests
 import ipywidgets as W
-from IPython.display import display, clear_output, Video as IPyVideo
+from IPython.display import display, clear_output
 
 try:
     from config import PEXELS_API_KEY
@@ -26,6 +26,31 @@ def _load():
 DATA = _load()
 SEARCH_CACHE = {}
 MEDIA_CACHE = {}
+
+def _preview_bytes(url, limit_mb=12):
+    """Fetch a small preview into memory only; not saved as a stock asset."""
+    if not url:
+        return None
+    if url in MEDIA_CACHE:
+        return MEDIA_CACHE[url]
+    try:
+        r = requests.get(url, timeout=45, stream=True)
+        r.raise_for_status()
+        chunks = []
+        total = 0
+        limit = limit_mb * 1024 * 1024
+        for chunk in r.iter_content(256 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > limit:
+                return None
+            chunks.append(chunk)
+        data = b"".join(chunks)
+        MEDIA_CACHE[url] = data
+        return data
+    except Exception:
+        return None
 
 def _api_search(query, kind="videos", per_page=6):
     if not PEXELS_API_KEY:
@@ -101,11 +126,86 @@ def _save():
     )
 
 def _status(item):
+    """Conservative review status based on narration vs. query/asset."""
     if item.get("source_type") == "original":
         return "ALMOST OK"
-    if item.get("pexels_id"):
-        return item.get("review_status", "ALMOST OK")
-    return "INCOMPLETE"
+
+    query = str(item.get("query") or "").lower().strip()
+    text = str(item.get("text") or "").lower().strip()
+
+    if not query or not item.get("pexels_id"):
+        return "INCOMPLETE"
+
+    # Generic queries should never auto-pass.
+    generic = {
+        "hotel exterior", "hotel interior", "hotel bedroom",
+        "room interior", "hotel guests travel", "hotel review",
+        "travel destination", "hotel exterior arrival",
+        "hotel location city attractions",
+    }
+    if query in generic:
+        return "INCOMPLETE"
+
+    # Require at least one meaningful concept from the query to be present
+    # (or clearly implied) in the narration. This catches cases like
+    # "birthday ..." being assigned "pet friendly dog".
+    synonyms = {
+        "swimming pool": ("pool", "swimming"),
+        "spa": ("spa", "massage", "wellness", "sauna"),
+        "gym": ("gym", "fitness", "workout", "exercise"),
+        "family suite": ("family", "suite"),
+        "hotel suite": ("suite",),
+        "bunk beds": ("bunk bed", "bunk beds"),
+        "pet friendly dog": ("pet", "dog", "dogs", "cat", "cats"),
+        "birthday celebration": ("birthday", "celebrat", "anniversary"),
+        "celebration": ("celebrat", "birthday", "anniversary"),
+        "restaurant dining": ("restaurant", "dining", "dinner", "lunch", "food"),
+        "breakfast": ("breakfast",),
+        "room service": ("room service", "in-room dining"),
+        "bathroom": ("bathroom", "shower", "bathtub", "toilet", "toiletries"),
+        "wifi": ("wifi", "wi-fi", "internet"),
+        "balcony": ("balcony", "terrace", "patio", "veranda"),
+        "beach ocean": ("beach", "ocean", "sea", "coast", "shore"),
+        "historic hotel exterior": ("historic", "history", "1940", "1950", "1960", "architecture", "retro"),
+    }
+
+    terms = synonyms.get(query)
+    if terms:
+        matched = False
+        for term in terms:
+            if term.endswith("at") or term in {"celebrat"}:
+                if term in text:
+                    matched = True
+                    break
+            elif term in text:
+                matched = True
+                break
+        if not matched:
+            return "INCOMPLETE"
+
+    # For compound queries, require some lexical overlap unless query is a
+    # deliberately generic visual fallback.
+    qwords = [w for w in re.findall(r"[a-z0-9]+", query) if len(w) >= 4]
+    if qwords and not any(w in text for w in qwords):
+        # Allow common canonical terms whose source narration uses variants.
+        aliases = {
+            "fitness": ("gym", "fitness", "workout", "exercise"),
+            "restaurant": ("restaurant", "dining", "dinner", "lunch", "food"),
+            "friendly": ("pet", "dog", "cat", "animal"),
+            "ocean": ("ocean", "sea", "beach", "coast"),
+            "hotel": ("hotel", "resort", "property"),
+            "landmark": ("landmark", "attraction", "museum", "temple", "church"),
+        }
+        ok = False
+        for qw in qwords:
+            variants = aliases.get(qw, (qw,))
+            if any(v in text for v in variants):
+                ok = True
+                break
+        if not ok:
+            return "INCOMPLETE"
+
+    return "ALMOST OK"
 
 def launch():
     if not DATA:
@@ -160,6 +260,7 @@ def launch():
 
     current = W.Output(layout={"border": "1px solid #ddd"})
     results = W.Output(layout={"border": "1px solid #ddd", "padding": "8px"})
+    preview_box = W.Output(layout={"border": "1px solid #ddd", "padding": "8px"})
     messages = W.Output()
 
     filtered = []
@@ -218,11 +319,9 @@ def launch():
                 display(W.Image(url=media, format="png", width=420))
             elif url and item.get("media_type") == "video":
                 try:
-                    # embed=False keeps the review stage download-free: the
-                    # browser streams the direct Pexels MP4 URL.
-                    display(IPyVideo(url=url, embed=False, width=560, html_attributes="controls"))
-                except Exception as exc:
-                    display(W.HTML(f"<b>Remote video preview unavailable:</b> {exc}"))
+                    display(W.HTML(f"<video controls width='560' src='{url}'></video>"))
+                except Exception:
+                    display(W.HTML("Remote video preview unavailable."))
 
         render_stats()
 
@@ -242,7 +341,7 @@ def launch():
         DATA[n]["candidates"] = cards
         DATA[n]["query"] = q
         DATA[n]["media_type"] = "video" if kind.value == "videos" else "photo"
-        DATA[n]["review_status"] = "ALMOST OK" if cards else "INCOMPLETE"
+        DATA[n]["review_status"] = _status(DATA[n]) if cards else "INCOMPLETE"
         DATA[n]["status"] = DATA[n]["review_status"]
 
         with results:
@@ -253,21 +352,13 @@ def launch():
                     f"<b>Pexels {card['pexels_id']}</b><br>"
                     f"<button>Use</button>"
                 )
-                if card.get("thumb"):
-                    try:
-                        img = W.Image(
-                            value=requests.get(card["thumb"], timeout=20).content,
-                            format="png",
-                            width=250,
-                            height=140,
-                        )
-                    except Exception:
-                        img = W.HTML(
-                            f"<img src='{card['thumb']}' "
-                            "style='width:250px;height:140px;object-fit:cover'>"
-                        )
-                else:
-                    img = W.HTML("<div style='width:250px;height:140px'>No thumbnail</div>")
+                img = W.Image(
+                    value=requests.get(card["thumb"], timeout=20).content
+                    if card.get("thumb") else b"",
+                    format="png",
+                    width=250,
+                    height=140,
+                )
                 pick = W.Button(
                     description=f"Use {j+1}",
                     layout=W.Layout(width="250px")
@@ -279,14 +370,29 @@ def launch():
                     DATA[n]["preview"] = card.get("thumb")
                     DATA[n]["media_type"] = card.get("type")
                     DATA[n]["query"] = query.value.strip()
-                    DATA[n]["review_status"] = "ALMOST OK"
-                    DATA[n]["status"] = "ALMOST OK"
+                    DATA[n]["review_status"] = _status(DATA[n])
+                    DATA[n]["status"] = DATA[n]["review_status"]
+
+                    with preview_box:
+                        clear_output(wait=True)
+                        if card.get("type") == "video" and card.get("url"):
+                            data = _preview_bytes(card["url"])
+                            if data:
+                                display(W.Video(value=data, format="mp4", width=640, height=360))
+                            else:
+                                display(W.HTML(
+                                    "<p>Preview could not be loaded temporarily. "
+                                    "You can still select this result.</p>"
+                                ))
+
                     with messages:
                         clear_output(wait=True)
                         print(
                             f"Selected Pexels ID {card['pexels_id']} "
-                            f"for timeline item {n:03d}. Nothing downloaded."
+                            f"for timeline item {n:03d}. "
+                            f"Status: {_status(DATA[n])}. Nothing permanently downloaded."
                         )
+                    render_stats()
                     show_item()
 
                 pick.on_click(choose)
@@ -406,6 +512,7 @@ def launch():
             kind,
             W.HBox([search, keep, save]),
             results,
+            preview_box,
             messages,
             download,
         ])
