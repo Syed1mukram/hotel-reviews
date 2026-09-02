@@ -311,71 +311,260 @@ def continue_download():
         json.dumps({"items": DATA, "failures": failures}, indent=2, ensure_ascii=False),
     )
 
+def result_choices(cards):
+    return [
+        f"{c.get('pexels_id')} | {c.get('media_type','video')} | "
+        f"{c.get('width','?')}x{c.get('height','?')}"
+        for c in cards
+    ]
+
+def selected_card(cards, choice):
+    if not choice:
+        return None
+    pid = str(choice).split("|", 1)[0].strip()
+    for c in cards:
+        if str(c.get("pexels_id")) == pid:
+            return c
+    return None
+
 with gr.Blocks(title="Hotel Visual Review") as demo:
     gr.Markdown("# Hotel Visual Review")
     gr.Markdown(
-        "Review stage downloads **no stock media**. It searches Pexels and previews remote thumbnails. "
-        "Only **Continue & Download** downloads the approved stock assets."
+        "Review the exact generated timeline. Search/preview Pexels remotely. "
+        "Nothing is downloaded until **Continue & Download**."
     )
 
-    show_all = gr.Checkbox(label="Show ALMOST OK too", value=False)
-    stats_box = gr.Markdown(stats(False))
+    show_all = gr.Checkbox(label="Show ALMOST OK too", value=True)
+    stats_box = gr.Markdown(stats(True))
 
     selector = gr.Dropdown(
-        choices=choices(False),
-        label="Clips needing attention",
+        choices=choices(True),
+        label="Timeline clips",
+        value=None,
         allow_custom_value=False,
     )
 
-    info = gr.Markdown("Select a clip.")
+    info = gr.Markdown("Select a timeline clip.")
     sentence = gr.Textbox(label="Narration", interactive=False, lines=4)
     query = gr.Textbox(label="Editable Pexels query")
     kind = gr.Radio(["videos", "photos"], value="videos", label="Search type")
+
     search_btn = gr.Button("Search Pexels", variant="primary")
     save_btn = gr.Button("Save this query")
-    gallery = gr.Gallery(label="Pexels preview results", columns=3, height="auto")
     search_status = gr.Markdown()
 
-    continue_btn = gr.Button("CONTINUE & DOWNLOAD STOCK MEDIA", variant="stop")
+    gallery = gr.Gallery(
+        label="Pexels Preview",
+        columns=3,
+        rows=1,
+        height="auto",
+        object_fit="contain",
+        allow_preview=True,
+    )
+
+    result_picker = gr.Radio(
+        choices=[],
+        label="Choose a Pexels result",
+        visible=False,
+    )
+    use_btn = gr.Button("USE SELECTED PEXELS RESULT", visible=False, variant="primary")
+
+    selected_preview = gr.Video(
+        label="Selected Pexels video preview",
+        visible=False,
+        autoplay=False,
+    )
+
+    current_media = gr.Markdown("")
+
+    continue_btn = gr.Button(
+        "CONTINUE & DOWNLOAD STOCK MEDIA",
+        variant="stop",
+    )
     final_status = gr.Markdown()
     manifest_box = gr.Textbox(label="Download manifest / result", lines=12)
 
-    def toggle_all(v):
-        refresh_index()
-        ch = choices(v)
+    def refresh_view(show):
+        ch = choices(bool(show))
+        # Always choose a valid first item or None.
         first = ch[0] if ch else None
-        item = get_item(first)
+        item = get_item(first) if first else None
         if not item:
             return (
-                ch, stats(v), None, "", "", [], "No clips in this view.", ""
+                ch,
+                stats(bool(show)),
+                None,
+                "",
+                "",
+                [],
+                gr.update(visible=False, choices=[]),
+                gr.update(visible=False),
+                gr.update(visible=False, value=None),
+                "No clips in this view.",
             )
+
+        cards = item.get("candidates") or []
         return (
             ch,
-            stats(v),
+            stats(bool(show)),
             first,
-            item["text"],
-            item["query"],
-            gallery_data(item.get("candidates") or []),
+            item.get("text", ""),
+            item.get("query", ""),
+            gallery_data(cards),
+            gr.update(
+                visible=bool(cards),
+                choices=result_choices(cards),
+                value=(result_choices(cards)[0] if cards else None),
+            ),
+            gr.update(visible=bool(cards)),
+            gr.update(
+                visible=bool(cards),
+                value=(cards[0].get("url") if cards else None),
+            ),
             preview_md(item),
-            "",
+        )
+
+    def choose_item(choice):
+        item = get_item(choice)
+        if not item:
+            return (
+                "", "", [], gr.update(visible=False, choices=[]),
+                gr.update(visible=False), gr.update(visible=False, value=None),
+                "No clip selected."
+            )
+        cards = item.get("candidates") or []
+        labels = result_choices(cards)
+        first_url = cards[0].get("url") if cards else None
+        return (
+            item.get("text", ""),
+            item.get("query", ""),
+            gallery_data(cards),
+            gr.update(visible=bool(cards), choices=labels, value=(labels[0] if labels else None)),
+            gr.update(visible=bool(cards)),
+            gr.update(visible=bool(cards), value=first_url),
+            preview_md(item),
+        )
+
+    def do_search_v2(choice, new_query, search_kind):
+        item = get_item(choice)
+        if not item:
+            return (
+                [], "No clip selected.", "", "No clip selected.",
+                gr.update(visible=False, choices=[]),
+                gr.update(visible=False),
+                gr.update(visible=False, value=None),
+            )
+        q = str(new_query or "").strip()
+        if not q:
+            return (
+                [], "Query is empty.", q, preview_md(item),
+                gr.update(visible=False, choices=[]),
+                gr.update(visible=False),
+                gr.update(visible=False, value=None),
+            )
+
+        key = (q.lower(), search_kind)
+        if key not in SEARCH_CACHE:
+            try:
+                SEARCH_CACHE[key] = candidate_cards(q, search_kind)
+            except Exception as exc:
+                return (
+                    [], f"Search failed: {exc}", q, preview_md(item),
+                    gr.update(visible=False, choices=[]),
+                    gr.update(visible=False),
+                    gr.update(visible=False, value=None),
+                )
+
+        cards = SEARCH_CACHE[key]
+        item["candidates"] = cards
+        item["query"] = q
+        item["media_type"] = "video" if search_kind == "videos" else "photo"
+        item["review_status"] = "ALMOST OK" if cards else "INCOMPLETE"
+
+        labels = result_choices(cards)
+        first_url = cards[0].get("url") if cards else None
+
+        return (
+            gallery_data(cards),
+            f"Found {len(cards)} result(s). Status: **{item['review_status']}**",
+            q,
+            preview_md(item),
+            gr.update(
+                visible=bool(cards),
+                choices=labels,
+                value=(labels[0] if labels else None),
+            ),
+            gr.update(visible=bool(cards)),
+            gr.update(visible=bool(cards), value=first_url),
+        )
+
+    def preview_result(result_choice, item_choice):
+        item = get_item(item_choice)
+        if not item:
+            return gr.update(visible=False, value=None)
+        card = selected_card(item.get("candidates") or [], result_choice)
+        if not card:
+            return gr.update(visible=False, value=None)
+        if card.get("media_type") != "video" or not card.get("url"):
+            return gr.update(visible=False, value=None)
+        return gr.update(visible=True, value=card.get("url"))
+
+    def use_selected_result(item_choice, result_choice):
+        item = get_item(item_choice)
+        if not item:
+            return "No clip selected."
+
+        card = selected_card(item.get("candidates") or [], result_choice)
+        if not card:
+            return "Select a Pexels result first."
+
+        item["pexels_id"] = card.get("pexels_id")
+        item["media_type"] = card.get("media_type")
+        item["preview"] = card.get("preview")
+        item["query"] = item.get("query", "")
+        item["status"] = "ALMOST OK"
+        item["review_status"] = "ALMOST OK"
+        item["edited"] = True
+        item["selected_url"] = card.get("url")
+        return (
+            f"Selected Pexels ID **{item['pexels_id']}**. "
+            "Nothing is downloaded yet."
         )
 
     show_all.change(
-        toggle_all,
+        refresh_view,
         inputs=[show_all],
-        outputs=[selector, stats_box, selector, sentence, query, gallery, info, search_status],
+        outputs=[
+            selector, stats_box, selector, sentence, query, gallery,
+            result_picker, use_btn, selected_preview, info
+        ],
     )
 
     selector.change(
-        on_select,
+        choose_item,
         inputs=[selector],
-        outputs=[sentence, query, gallery, info],
+        outputs=[sentence, query, gallery, result_picker, use_btn, selected_preview, info],
     )
 
     search_btn.click(
-        do_search,
+        do_search_v2,
         inputs=[selector, query, kind],
-        outputs=[gallery, search_status, query, info],
+        outputs=[
+            gallery, search_status, query, info,
+            result_picker, use_btn, selected_preview
+        ],
+    )
+
+    result_picker.change(
+        preview_result,
+        inputs=[result_picker, selector],
+        outputs=[selected_preview],
+    )
+
+    use_btn.click(
+        use_selected_result,
+        inputs=[selector, result_picker],
+        outputs=[search_status],
     )
 
     save_btn.click(
@@ -389,5 +578,10 @@ with gr.Blocks(title="Hotel Visual Review") as demo:
         outputs=[final_status, manifest_box],
     )
 
+
+def launch_review():
+    demo.launch(share=True)
+
+
 if __name__ == "__main__":
-    demo.launch()
+    launch_review()
