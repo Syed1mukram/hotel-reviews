@@ -337,10 +337,11 @@ with gr.Blocks(title="Hotel Visual Review") as demo:
     show_all = gr.Checkbox(label="Show ALMOST OK too", value=True)
     stats_box = gr.Markdown(stats(True))
 
+    initial_choices = choices(True)
     selector = gr.Dropdown(
-        choices=choices(True),
+        choices=initial_choices,
         label="Timeline clips",
-        value=None,
+        value=(initial_choices[0] if initial_choices else None),
         allow_custom_value=False,
     )
 
@@ -405,12 +406,11 @@ with gr.Blocks(title="Hotel Visual Review") as demo:
 
         cards = item.get("candidates") or []
         return (
-            ch,
+            gr.update(choices=ch, value=first),
             stats(bool(show)),
-            first,
-            item.get("text", ""),
-            item.get("query", ""),
-            gallery_data(cards),
+            item.get("text", "") if item else "",
+            item.get("query", "") if item else "",
+            gallery_data(cards) if item else [],
             gr.update(
                 visible=bool(cards),
                 choices=result_choices(cards),
@@ -535,7 +535,7 @@ with gr.Blocks(title="Hotel Visual Review") as demo:
         refresh_view,
         inputs=[show_all],
         outputs=[
-            selector, stats_box, selector, sentence, query, gallery,
+            selector, stats_box, sentence, query, gallery,
             result_picker, use_btn, selected_preview, info
         ],
     )
