@@ -3,7 +3,7 @@ from pathlib import Path
 
 import requests
 import ipywidgets as W
-from IPython.display import display, clear_output
+from IPython.display import display, clear_output, Image as IPyImage, Video as IPyVideo, HTML
 
 try:
     from config import PEXELS_API_KEY
@@ -25,6 +25,7 @@ def _load():
 
 DATA = _load()
 SEARCH_CACHE = {}
+_recalculate_statuses()
 MEDIA_CACHE = {}
 
 def _preview_bytes(url, limit_mb=12):
@@ -126,7 +127,7 @@ def _save():
     )
 
 def _status(item):
-    """Conservative review status based on narration vs. query/asset."""
+    """Conservative review status; IDs alone never make a clip ALMOST OK."""
     if item.get("source_type") == "original":
         return "ALMOST OK"
 
@@ -136,27 +137,23 @@ def _status(item):
     if not query or not item.get("pexels_id"):
         return "INCOMPLETE"
 
-    # Generic queries should never auto-pass.
     generic = {
-        "hotel exterior", "hotel interior", "hotel bedroom",
-        "room interior", "hotel guests travel", "hotel review",
-        "travel destination", "hotel exterior arrival",
-        "hotel location city attractions",
+        "hotel exterior", "hotel interior", "hotel bedroom", "room interior",
+        "hotel guests travel", "hotel review", "travel destination",
+        "hotel exterior arrival", "hotel location city attractions",
+        "san diego", "lafayette hotel and club landmark",
     }
     if query in generic:
         return "INCOMPLETE"
 
-    # Require at least one meaningful concept from the query to be present
-    # (or clearly implied) in the narration. This catches cases like
-    # "birthday ..." being assigned "pet friendly dog".
-    synonyms = {
+    concepts = {
         "swimming pool": ("pool", "swimming"),
-        "spa": ("spa", "massage", "wellness", "sauna"),
+        "spa": ("spa", "massage", "wellness", "sauna", "steam"),
         "gym": ("gym", "fitness", "workout", "exercise"),
         "family suite": ("family", "suite"),
         "hotel suite": ("suite",),
         "bunk beds": ("bunk bed", "bunk beds"),
-        "pet friendly dog": ("pet", "dog", "dogs", "cat", "cats"),
+        "pet friendly dog": ("pet", "dog", "dogs", "cat", "cats", "animal"),
         "birthday celebration": ("birthday", "celebrat", "anniversary"),
         "celebration": ("celebrat", "birthday", "anniversary"),
         "restaurant dining": ("restaurant", "dining", "dinner", "lunch", "food"),
@@ -166,46 +163,57 @@ def _status(item):
         "wifi": ("wifi", "wi-fi", "internet"),
         "balcony": ("balcony", "terrace", "patio", "veranda"),
         "beach ocean": ("beach", "ocean", "sea", "coast", "shore"),
-        "historic hotel exterior": ("historic", "history", "1940", "1950", "1960", "architecture", "retro"),
+        "historic hotel exterior": (
+            "historic", "history", "1940", "1950", "1960",
+            "architecture", "retro", "heritage",
+        ),
+        "museum": ("museum",),
+        "temple": ("temple",),
+        "hiking": ("hiking", "hike", "trek"),
+        "cycling": ("cycling", "bicycle", "bike", "biking"),
+        "golf course": ("golf",),
+        "tennis court": ("tennis",),
+        "snorkeling": ("snorkeling", "snorkelling"),
+        "scuba diving": ("scuba", "diving"),
+        "kayaking": ("kayak", "kayaking"),
+        "surfing": ("surf", "surfing"),
+        "sailing": ("sailing", "sailboat"),
+        "island boat tour": ("boat", "island"),
+        "meeting room": ("meeting", "conference", "business", "workspace"),
+        "game room": ("game room", "games room", "gaming", "games"),
     }
 
-    terms = synonyms.get(query)
-    if terms:
-        matched = False
-        for term in terms:
-            if term.endswith("at") or term in {"celebrat"}:
-                if term in text:
-                    matched = True
-                    break
-            elif term in text:
-                matched = True
-                break
-        if not matched:
-            return "INCOMPLETE"
+    if query in concepts:
+        return "ALMOST OK" if any(term in text for term in concepts[query]) else "INCOMPLETE"
 
-    # For compound queries, require some lexical overlap unless query is a
-    # deliberately generic visual fallback.
+    # For other stock queries, require at least one meaningful query word
+    # to have a lexical or alias match in the narration.
+    aliases = {
+        "restaurant": ("restaurant", "dining", "dinner", "lunch", "food"),
+        "hotel": ("hotel", "resort", "property"),
+        "landmark": ("landmark", "attraction", "museum", "temple", "church"),
+        "beach": ("beach", "ocean", "sea", "coast", "shore"),
+        "ocean": ("ocean", "sea", "beach", "coast"),
+        "fitness": ("gym", "fitness", "workout", "exercise"),
+        "friendly": ("pet", "dog", "cat", "animal"),
+    }
     qwords = [w for w in re.findall(r"[a-z0-9]+", query) if len(w) >= 4]
-    if qwords and not any(w in text for w in qwords):
-        # Allow common canonical terms whose source narration uses variants.
-        aliases = {
-            "fitness": ("gym", "fitness", "workout", "exercise"),
-            "restaurant": ("restaurant", "dining", "dinner", "lunch", "food"),
-            "friendly": ("pet", "dog", "cat", "animal"),
-            "ocean": ("ocean", "sea", "beach", "coast"),
-            "hotel": ("hotel", "resort", "property"),
-            "landmark": ("landmark", "attraction", "museum", "temple", "church"),
-        }
-        ok = False
-        for qw in qwords:
-            variants = aliases.get(qw, (qw,))
-            if any(v in text for v in variants):
-                ok = True
-                break
-        if not ok:
-            return "INCOMPLETE"
+    if not qwords:
+        return "INCOMPLETE"
 
-    return "ALMOST OK"
+    return "ALMOST OK" if any(
+        w in text or any(a in text for a in aliases.get(w, ()))
+        for w in qwords
+    ) else "INCOMPLETE"
+
+
+def _recalculate_statuses():
+    for item in DATA:
+        value = _status(item)
+        item["review_status"] = value
+        item["status"] = value
+
+
 
 def launch():
     if not DATA:
@@ -313,15 +321,32 @@ def launch():
                 f"<b>Query:</b> {q or '(none)'}"
                 "</div>"
             ))
-            media = item.get("preview")
+            # Always show a visual preview. Original images are local files;
+            # stock results use the Pexels thumbnail. Video playback is attempted
+            # from the Pexels MP4 URL without creating a permanent local asset.
+            media_path = str(item.get("media") or "")
+            thumb = item.get("preview")
             url = item.get("selected_url") or item.get("pexels_url")
-            if media:
-                display(W.Image(url=media, format="png", width=420))
-            elif url and item.get("media_type") == "video":
+
+            if media_path and Path(media_path).exists() and Path(media_path).suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}:
                 try:
-                    display(W.HTML(f"<video controls width='560' src='{url}'></video>"))
+                    display(IPyImage(filename=media_path, width=560))
                 except Exception:
-                    display(W.HTML("Remote video preview unavailable."))
+                    display(HTML(f"<img src='file://{media_path}' style='max-width:560px'>"))
+            elif thumb:
+                try:
+                    display(IPyImage(url=thumb, width=560))
+                except Exception:
+                    display(HTML(f"<img src='{thumb}' style='max-width:560px'>"))
+
+            if item.get("media_type") == "video" and url:
+                try:
+                    display(IPyVideo(url=url, embed=False, width=640))
+                except Exception:
+                    display(HTML(
+                        f"<p>Video player could not embed this remote Pexels file. "
+                        f"<a href='{url}' target='_blank'>Open video preview</a></p>"
+                    ))
 
         render_stats()
 
