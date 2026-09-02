@@ -3,7 +3,7 @@ from pathlib import Path
 
 import requests
 import ipywidgets as W
-from IPython.display import display, clear_output
+from IPython.display import display, clear_output, Video as IPyVideo
 
 try:
     from config import PEXELS_API_KEY
@@ -218,9 +218,11 @@ def launch():
                 display(W.Image(url=media, format="png", width=420))
             elif url and item.get("media_type") == "video":
                 try:
-                    display(W.HTML(f"<video controls width='560' src='{url}'></video>"))
-                except Exception:
-                    display(W.HTML("Remote video preview unavailable."))
+                    # embed=False keeps the review stage download-free: the
+                    # browser streams the direct Pexels MP4 URL.
+                    display(IPyVideo(url=url, embed=False, width=560, html_attributes="controls"))
+                except Exception as exc:
+                    display(W.HTML(f"<b>Remote video preview unavailable:</b> {exc}"))
 
         render_stats()
 
@@ -251,13 +253,21 @@ def launch():
                     f"<b>Pexels {card['pexels_id']}</b><br>"
                     f"<button>Use</button>"
                 )
-                img = W.Image(
-                    value=requests.get(card["thumb"], timeout=20).content
-                    if card.get("thumb") else b"",
-                    format="png",
-                    width=250,
-                    height=140,
-                )
+                if card.get("thumb"):
+                    try:
+                        img = W.Image(
+                            value=requests.get(card["thumb"], timeout=20).content,
+                            format="png",
+                            width=250,
+                            height=140,
+                        )
+                    except Exception:
+                        img = W.HTML(
+                            f"<img src='{card['thumb']}' "
+                            "style='width:250px;height:140px;object-fit:cover'>"
+                        )
+                else:
+                    img = W.HTML("<div style='width:250px;height:140px'>No thumbnail</div>")
                 pick = W.Button(
                     description=f"Use {j+1}",
                     layout=W.Layout(width="250px")
