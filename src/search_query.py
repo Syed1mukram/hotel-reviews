@@ -1249,41 +1249,50 @@ class SearchQueryGenerator:
         "chick fil a", "7-eleven", "7 eleven", "walgreens", "cvs",
     }
 
-    def extract_proper_nouns(self, original_text):
-        text = str(original_text).strip()
+    def _find_landmark_candidates(self, original_text):
+        """Return every distinct multi-word capitalized place name in the
+        sentence, each as (position, query), instead of picking only the
+        longest one. A sentence naming several landmarks (theaters, transit
+        centers, parks) should be able to cycle through all of them across
+        a long segment's multiple visual pieces, not repeat a single name."""
+        text = str(original_text)
 
-        # Two or more consecutive capitalized words, e.g.
-        # "Balboa Park", "Old Town Transit Center",
-        # "Queen Bee's Art and Cultural Center".
-        matches = re.findall(
+        candidates = re.finditer(
             r"\b[A-Z][a-zA-Z']*(?:\s+(?:of|the|and)\s+[A-Z][a-zA-Z']*"
             r"|\s+[A-Z][a-zA-Z']*)+\b",
             text,
         )
 
-        # Drop brand/chain names before picking the best match.
-        matches = [
-            m for m in matches
-            if m.strip().lower() not in self.BRAND_NAMES
-        ]
-
-        if not matches:
-            return ""
-
-        # Prefer the longest match (most specific named entity).
-        best = max(matches, key=len).strip()
-
-        if best.lower() in self.BRAND_NAMES:
-            return ""
-
         generic_leads = {
             "this is", "there is", "there's", "one guest", "one traveler",
             "another traveler", "another minor", "no property",
+            "there", "this", "today", "before", "first",
+            "the hotel", "the property", "a bit", "in fact",
+            "multiple travelers",
         }
-        if best.lower() in generic_leads:
-            return ""
 
-        return f"{best} travel landmark"
+        seen = set()
+        results = []
+        for m in candidates:
+            name = m.group(0).strip()
+            low = name.lower()
+            if low in self.BRAND_NAMES or low in generic_leads or low in seen:
+                continue
+            seen.add(low)
+            results.append((m.start(), f"{name} landmark"))
+
+        return results
+
+    def extract_proper_nouns(self, original_text):
+        """Kept for backward compatibility: returns only the single best
+        (longest) landmark name as a plain string. Prefer
+        _find_landmark_candidates() for new code, which returns all of
+        them so multi-landmark sentences aren't collapsed to one repeat."""
+        candidates = self._find_landmark_candidates(original_text)
+        if not candidates:
+            return ""
+        best = max(candidates, key=lambda c: len(c[1]))
+        return best[1].replace(" landmark", " travel landmark")
 
     def generate(self, text, scene="general"):
         """Deterministically extract concrete visual subjects from the sentence."""
@@ -1368,13 +1377,21 @@ class SearchQueryGenerator:
             if positions:
                 hits.append((min(positions), rule_id, query))
 
+        # Named landmarks get merged in by sentence position too — even
+        # when a keyword rule already matched (e.g. "beach") — so a
+        # sentence naming several places doesn't collapse to a single
+        # generic concept or drop every landmark but the longest one.
+        landmark_rule_id = len(rules)
+        for position, query in self._find_landmark_candidates(original):
+            hits.append((position, landmark_rule_id, query))
+
         concepts = []
         for _, _, query in sorted(hits, key=lambda x: (x[0], x[1])):
             if query not in concepts:
                 concepts.append(query)
 
         if concepts:
-            return " || ".join(concepts[:4])
+            return " || ".join(concepts[:5])
 
         # Explicitly visual historical/design cues.
         if re.search(r"\b(1940s|1950s|1960s|mid[- ]century|retro|historic|history|architecture|arches|tile work|courtyard|decor)\b", t):
@@ -1383,21 +1400,6 @@ class SearchQueryGenerator:
         # Explicit traveler/person visual cues.
         if re.search(r"\b(guests|guest|travelers|traveler|families|family|couples|children|kids)\b", t):
             return "hotel guests travel"
-
-        # Named place only when it is actually present.
-        candidates = re.findall(
-            r"\b[A-Z][A-Za-z']+(?:\s+[A-Z][A-Za-z']+){1,5}\b",
-            original,
-        )
-        rejected = (
-            "There", "This", "Today", "Before", "First", "One Guest",
-            "The Hotel", "The Property", "A Bit", "In Fact",
-            "Another Traveler", "Multiple Travelers",
-        )
-        for candidate in sorted(candidates, key=len, reverse=True):
-            if candidate.startswith(rejected):
-                continue
-            return f"{candidate} landmark"
 
         # Abstract sentences: choose a neutral property visual, never arbitrary prose.
         scene_l = str(scene).lower()
