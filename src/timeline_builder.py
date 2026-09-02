@@ -541,9 +541,9 @@ class TimelineBuilder:
         self,
         text,
         is_first=False,
+        is_new_sentence=False,
         context_before="",
         context_after="",
-        is_new_sentence=True,
     ):
 
         scene_data = self.scene.analyze(text)
@@ -551,22 +551,12 @@ class TimelineBuilder:
 
         visual_queries = self.current_visual_queries or [
             q.strip()
-            for q in self.query_generator.generate(
-                text=text,
-                scene=scene,
-            ).split("||")
+            for q in self.query_generator.generate(text=text, scene=scene).split("||")
             if q.strip()
         ]
-
         if not visual_queries:
             visual_queries = ["hotel exterior"]
 
-        # is_new_sentence marks the FIRST select_visual call for this
-        # sentence, regardless of whether it's the video's overall first
-        # visual (is_first). Without this distinction, every sentence's
-        # first call would immediately increment past concept[0] and,
-        # for a 2-concept sentence, land on and stay on the last concept
-        # for every visual piece of that sentence.
         if is_new_sentence:
             self.current_visual_query_index = 0
         else:
@@ -860,9 +850,9 @@ class TimelineBuilder:
             first_visual = self.select_visual(
                 text,
                 is_first=(i == 0 if intro_index is None else i == intro_index),
+                is_new_sentence=True,
                 context_before=context_before,
                 context_after=context_after,
-                is_new_sentence=True,
             )
 
             if first_visual is None:
@@ -871,10 +861,10 @@ class TimelineBuilder:
             # Never leave one visual sitting on screen for a long sentence.
             # A sentence remains intact; only its visual track is subdivided.
             max_visual_duration = 4.0
-            visual_count_needed = max(
-                1,
-                min(5, int((duration + max_visual_duration - 0.001) // max_visual_duration))
-            )
+            min_visual_duration = 2.5
+            keyword_count = max(1, len(self.current_visual_queries))
+            max_by_duration = max(1, int(duration // min_visual_duration))
+            visual_count_needed = min(keyword_count, max_by_duration)
 
             visuals = [first_visual]
 
@@ -883,9 +873,9 @@ class TimelineBuilder:
                 extra = self.select_visual(
                     text,
                     is_first=False,
+                    is_new_sentence=False,
                     context_before=context_before,
                     context_after=context_after,
-                    is_new_sentence=False,
                 )
                 if extra is None:
                     break
@@ -918,11 +908,15 @@ class TimelineBuilder:
                     "source_type": visual["source_type"],
                     "label": visual["label"],
                     "score": visual["score"],
+                    "query": self.current_visual_queries[min(piece_index, len(self.current_visual_queries)-1)],
                     "sentence_index": i,
                     "visual_piece": piece_index + 1,
                     "visual_pieces_total": len(visuals),
                 })
 
+                print(
+                    f"[SEARCH QUERY] {self.current_visual_queries[min(piece_index, len(self.current_visual_queries)-1)]}"
+                )
                 print(
                     f"SOURCE: {visual['source_type']}"
                 )
