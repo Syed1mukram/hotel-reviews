@@ -330,22 +330,22 @@ def selected_card(cards, choice):
 with gr.Blocks(title="Hotel Visual Review") as demo:
     gr.Markdown("# Hotel Visual Review")
     gr.Markdown(
-        "Review the exact generated timeline. Search/preview Pexels remotely. "
-        "Nothing is downloaded until **Continue & Download**."
+        "Review the exact generated timeline. Pexels search/preview is remote; "
+        "nothing is downloaded until **CONTINUE & DOWNLOAD STOCK MEDIA**."
     )
 
     show_all = gr.Checkbox(label="Show ALMOST OK too", value=True)
     stats_box = gr.Markdown(stats(True))
 
-    initial_choices = choices(True)
-    selector = gr.Dropdown(
-        choices=initial_choices,
-        label="Timeline clips",
-        value=(initial_choices[0] if initial_choices else None),
-        allow_custom_value=False,
+    item_no = gr.Slider(
+        minimum=0,
+        maximum=max(0, len(DATA) - 1),
+        step=1,
+        value=0,
+        label=f"Timeline item (0–{max(0, len(DATA)-1)})",
     )
 
-    info = gr.Markdown("Select a timeline clip.")
+    info = gr.Markdown()
     sentence = gr.Textbox(label="Narration", interactive=False, lines=4)
     query = gr.Textbox(label="Editable Pexels query")
     kind = gr.Radio(["videos", "photos"], value="videos", label="Search type")
@@ -368,15 +368,17 @@ with gr.Blocks(title="Hotel Visual Review") as demo:
         label="Choose a Pexels result",
         visible=False,
     )
-    use_btn = gr.Button("USE SELECTED PEXELS RESULT", visible=False, variant="primary")
+    use_btn = gr.Button(
+        "USE SELECTED PEXELS RESULT",
+        visible=False,
+        variant="primary",
+    )
 
     selected_preview = gr.Video(
         label="Selected Pexels video preview",
         visible=False,
         autoplay=False,
     )
-
-    current_media = gr.Markdown("")
 
     continue_btn = gr.Button(
         "CONTINUE & DOWNLOAD STOCK MEDIA",
@@ -385,79 +387,62 @@ with gr.Blocks(title="Hotel Visual Review") as demo:
     final_status = gr.Markdown()
     manifest_box = gr.Textbox(label="Download manifest / result", lines=12)
 
-    def refresh_view(show):
-        ch = choices(bool(show))
-        # Always choose a valid first item or None.
-        first = ch[0] if ch else None
-        item = get_item(first) if first else None
+    def item_from_no(n):
+        try:
+            idx = int(n)
+        except (TypeError, ValueError):
+            return None
+        if idx < 0 or idx >= len(DATA):
+            return None
+        return DATA[idx]
+
+    def show_item(n):
+        item = item_from_no(n)
         if not item:
             return (
-                ch,
-                stats(bool(show)),
-                None,
+                "Invalid timeline item.",
                 "",
                 "",
                 [],
                 gr.update(visible=False, choices=[]),
                 gr.update(visible=False),
                 gr.update(visible=False, value=None),
-                "No clips in this view.",
-            )
-
-        cards = item.get("candidates") or []
-        return (
-            gr.update(choices=ch, value=first),
-            stats(bool(show)),
-            item.get("text", "") if item else "",
-            item.get("query", "") if item else "",
-            gallery_data(cards) if item else [],
-            gr.update(
-                visible=bool(cards),
-                choices=result_choices(cards),
-                value=(result_choices(cards)[0] if cards else None),
-            ),
-            gr.update(visible=bool(cards)),
-            gr.update(
-                visible=bool(cards),
-                value=(cards[0].get("url") if cards else None),
-            ),
-            preview_md(item),
-        )
-
-    def choose_item(choice):
-        item = get_item(choice)
-        if not item:
-            return (
-                "", "", [], gr.update(visible=False, choices=[]),
-                gr.update(visible=False), gr.update(visible=False, value=None),
-                "No clip selected."
             )
         cards = item.get("candidates") or []
         labels = result_choices(cards)
         first_url = cards[0].get("url") if cards else None
         return (
+            preview_md(item),
             item.get("text", ""),
             item.get("query", ""),
             gallery_data(cards),
-            gr.update(visible=bool(cards), choices=labels, value=(labels[0] if labels else None)),
+            gr.update(
+                visible=bool(cards),
+                choices=labels,
+                value=(labels[0] if labels else None),
+            ),
             gr.update(visible=bool(cards)),
             gr.update(visible=bool(cards), value=first_url),
-            preview_md(item),
         )
 
-    def do_search_v2(choice, new_query, search_kind):
-        item = get_item(choice)
+    def search_item(n, new_query, search_kind):
+        item = item_from_no(n)
         if not item:
             return (
-                [], "No clip selected.", "", "No clip selected.",
+                [],
+                "Invalid timeline item.",
+                "",
                 gr.update(visible=False, choices=[]),
                 gr.update(visible=False),
                 gr.update(visible=False, value=None),
             )
+
         q = str(new_query or "").strip()
         if not q:
             return (
-                [], "Query is empty.", q, preview_md(item),
+                [],
+                "Query is empty.",
+                item.get("query", ""),
                 gr.update(visible=False, choices=[]),
                 gr.update(visible=False),
                 gr.update(visible=False, value=None),
@@ -469,26 +454,27 @@ with gr.Blocks(title="Hotel Visual Review") as demo:
                 SEARCH_CACHE[key] = candidate_cards(q, search_kind)
             except Exception as exc:
                 return (
-                    [], f"Search failed: {exc}", q, preview_md(item),
+                    [],
+                    f"Search failed: {exc}",
+                    q,
                     gr.update(visible=False, choices=[]),
                     gr.update(visible=False),
                     gr.update(visible=False, value=None),
                 )
 
         cards = SEARCH_CACHE[key]
-        item["candidates"] = cards
         item["query"] = q
+        item["candidates"] = cards
         item["media_type"] = "video" if search_kind == "videos" else "photo"
         item["review_status"] = "ALMOST OK" if cards else "INCOMPLETE"
+        item["status"] = item["review_status"]
 
         labels = result_choices(cards)
         first_url = cards[0].get("url") if cards else None
-
         return (
             gallery_data(cards),
             f"Found {len(cards)} result(s). Status: **{item['review_status']}**",
             q,
-            preview_md(item),
             gr.update(
                 visible=bool(cards),
                 choices=labels,
@@ -498,22 +484,19 @@ with gr.Blocks(title="Hotel Visual Review") as demo:
             gr.update(visible=bool(cards), value=first_url),
         )
 
-    def preview_result(result_choice, item_choice):
-        item = get_item(item_choice)
+    def preview_result(result_choice, n):
+        item = item_from_no(n)
         if not item:
             return gr.update(visible=False, value=None)
         card = selected_card(item.get("candidates") or [], result_choice)
-        if not card:
-            return gr.update(visible=False, value=None)
-        if card.get("media_type") != "video" or not card.get("url"):
+        if not card or card.get("media_type") != "video":
             return gr.update(visible=False, value=None)
         return gr.update(visible=True, value=card.get("url"))
 
-    def use_selected_result(item_choice, result_choice):
-        item = get_item(item_choice)
+    def use_selected_result(n, result_choice):
+        item = item_from_no(n)
         if not item:
-            return "No clip selected."
-
+            return "Invalid timeline item."
         card = selected_card(item.get("candidates") or [], result_choice)
         if not card:
             return "Select a Pexels result first."
@@ -521,61 +504,77 @@ with gr.Blocks(title="Hotel Visual Review") as demo:
         item["pexels_id"] = card.get("pexels_id")
         item["media_type"] = card.get("media_type")
         item["preview"] = card.get("preview")
-        item["query"] = item.get("query", "")
-        item["status"] = "ALMOST OK"
-        item["review_status"] = "ALMOST OK"
-        item["edited"] = True
         item["selected_url"] = card.get("url")
+        item["edited"] = True
+        item["review_status"] = "ALMOST OK"
+        item["status"] = "ALMOST OK"
         return (
             f"Selected Pexels ID **{item['pexels_id']}**. "
             "Nothing is downloaded yet."
         )
 
-    show_all.change(
-        refresh_view,
-        inputs=[show_all],
+    def save_item(n):
+        path = save_data(DATA)
+        return f"Saved: {path}"
+
+    def toggle_status(show):
+        return stats(bool(show))
+
+    item_no.change(
+        show_item,
+        inputs=[item_no],
         outputs=[
-            selector, stats_box, sentence, query, gallery,
-            result_picker, use_btn, selected_preview, info
+            info, sentence, query, gallery,
+            result_picker, use_btn, selected_preview
         ],
     )
 
-    selector.change(
-        choose_item,
-        inputs=[selector],
-        outputs=[sentence, query, gallery, result_picker, use_btn, selected_preview, info],
+    show_all.change(
+        toggle_status,
+        inputs=[show_all],
+        outputs=[stats_box],
     )
 
     search_btn.click(
-        do_search_v2,
-        inputs=[selector, query, kind],
+        search_item,
+        inputs=[item_no, query, kind],
         outputs=[
-            gallery, search_status, query, info,
+            gallery, search_status, query,
             result_picker, use_btn, selected_preview
         ],
     )
 
     result_picker.change(
         preview_result,
-        inputs=[result_picker, selector],
+        inputs=[result_picker, item_no],
         outputs=[selected_preview],
     )
 
     use_btn.click(
         use_selected_result,
-        inputs=[selector, result_picker],
+        inputs=[item_no, result_picker],
         outputs=[search_status],
     )
 
     save_btn.click(
-        save_current,
-        inputs=[selector],
+        save_item,
+        inputs=[item_no],
         outputs=[final_status],
     )
 
     continue_btn.click(
         continue_download,
         outputs=[final_status, manifest_box],
+    )
+
+    # Populate the first item when the app opens.
+    demo.load(
+        show_item,
+        inputs=[item_no],
+        outputs=[
+            info, sentence, query, gallery,
+            result_picker, use_btn, selected_preview
+        ],
     )
 
 
